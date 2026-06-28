@@ -714,10 +714,12 @@ bool dshotBitbangDevInit(motorDevice_t *device, const motorDevConfig_t *motorCon
 
     for (int motorIndex = 0; motorIndex < MAX_SUPPORTED_MOTORS && motorIndex < dshotMotorCount; motorIndex++) {
         const unsigned reorderedMotorIndex = motorConfig->motorOutputReordering[motorIndex];
-        const timerHardware_t *timerHardware = timerGetConfiguredByTag(motorConfig->ioTags[reorderedMotorIndex]);
         const IO_t io = IOGetByTag(motorConfig->ioTags[reorderedMotorIndex]);
 
-        uint8_t output = motorConfig->motorInversion ?  timerHardware->output ^ TIMER_OUTPUT_INVERTED : timerHardware->output;
+        // Bitbang mode drives GPIO directly via DMA; timer channel polarity
+        // (CHx vs CHxN) does not apply. Only user-configured motorInversion
+        // and bidirectional telemetry determine the signal polarity.
+        uint8_t output = motorConfig->motorInversion ? TIMER_OUTPUT_INVERTED : TIMER_OUTPUT_NONE;
         bbPuPdMode = (output & TIMER_OUTPUT_INVERTED) ? BB_GPIO_PULLDOWN : BB_GPIO_PULLUP;
 
 #ifdef USE_DSHOT_TELEMETRY
