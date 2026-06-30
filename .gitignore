@@ -61,3 +61,12 @@ eeprom.bin
 #/src/config
 
 .temp/
+
+# Build artifacts
+compile_commands.json
+
+# IDE cache
+.cache/
+
+# Windows Zone.Identifier ADS files
+*:Zone.Identifier
