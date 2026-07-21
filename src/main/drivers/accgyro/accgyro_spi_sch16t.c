@@ -147,6 +147,14 @@ bool sch16tMisoD(uint64_t misoFrame)
     return (misoFrame & SCH16T_MISO_DATA_BIT) != 0;
 }
 
+// Copy a sample snapshot; returns false when the completion ISR bumped the generation during the
+// copy, meaning the source may have changed. Callers retry with a fresh generation and set.
+bool sch16tSeqlockCopy(uint8_t *dest, const uint8_t *src, unsigned len, volatile uint32_t *generation, uint32_t generationBefore)
+{
+    memcpy(dest, src, len);
+    return *generation == generationBefore;
+}
+
 #endif // USE_ACCGYRO_SCH16T || UNIT_TEST
 
 #if defined(USE_ACCGYRO_SCH16T) && !defined(UNIT_TEST)
@@ -176,11 +184,18 @@ static busSegment_t sch16tDmaSegments[SCH16T_DMA_BUFFER_COUNT][SCH16T_SAMPLE_FRA
 STATIC_DMA_DATA_AUTO uint8_t sch16tDmaTx[SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
 STATIC_DMA_DATA_AUTO uint8_t sch16tDmaRx[SCH16T_DMA_BUFFER_COUNT][SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
 static volatile uint8_t sch16tRxActive;
+// Bumped by the completion callback after each parity flip; used by the snapshot seqlock.
+static volatile uint32_t sch16tRxGeneration;
 
 STATIC_DMA_DATA_AUTO uint8_t sch16tWriteTx[SCH16T_FRAME_SIZE];
 STATIC_DMA_DATA_AUTO uint8_t sch16tBlockingTx[SCH16T_BLOCKING_FRAME_COUNT][SCH16T_FRAME_SIZE];
 STATIC_DMA_DATA_AUTO uint8_t sch16tBlockingRx[SCH16T_BLOCKING_FRAME_COUNT][SCH16T_FRAME_SIZE];
 STATIC_DMA_DATA_AUTO uint8_t sch16tDetectTx[SCH16T_DETECT_FRAME_COUNT][SCH16T_FRAME_SIZE];
+STATIC_DMA_DATA_AUTO uint8_t sch16tDetectRx[SCH16T_DETECT_FRAME_COUNT][SCH16T_FRAME_SIZE];
+
+// Dedicated blocking-chain buffers and descriptors; never referenced by the DMA chains.
+STATIC_DMA_DATA_AUTO uint8_t sch16tBlockingChainRx[SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
+static busSegment_t sch16tBlockingSegments[SCH16T_SAMPLE_FRAME_COUNT + 1];
 STATIC_DMA_DATA_AUTO uint8_t sch16tDetectRx[SCH16T_DETECT_FRAME_COUNT][SCH16T_FRAME_SIZE];
 
 static int16_t sch16tAccRaw[XYZ_AXIS_COUNT];
@@ -260,7 +275,7 @@ static bool sch16tReadSensorBlocking(const extDevice_t *dev, uint16_t addr, uint
     return sch16tReadBlocking(dev, addr, value20, true);
 }
 
-static bool sch16tParseSample(gyroDev_t *gyro, uint8_t bufferIndex)
+static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPLE_RESPONSE_COUNT][SCH16T_FRAME_SIZE])
 {
     static const uint16_t sourceAddresses[SCH16T_SAMPLE_RESPONSE_COUNT] = {
         SCH16T_RATE_X2,
@@ -272,10 +287,10 @@ static bool sch16tParseSample(gyroDev_t *gyro, uint8_t bufferIndex)
     };
     uint64_t responses[SCH16T_SAMPLE_RESPONSE_COUNT];
 
-    // DCNT is per output (datasheet Tables 31/32), so it cannot validate cross-channel coherence.
-    // DMA writes only the active set; the callback flips parity before publishing dataReady, leaving this set stable.
+    // DCNT is per output (datasheet Tables 31/32), so it cannot validate cross-channel coherence;
+    // callers pass a race-free frame set (DMA path snapshots under the generation seqlock).
     for (unsigned index = 0; index < SCH16T_SAMPLE_RESPONSE_COUNT; index++) {
-        responses[index] = sch16tFrameFromBytes(sch16tDmaRx[bufferIndex][index + 1]);
+        responses[index] = sch16tFrameFromBytes(frames[index]);
         if (!sch16tSensorFrameValid(responses[index], sourceAddresses[index])) {
             // PX4 counts CRC failures; Betaflight drops the complete sample.
             return false;
@@ -300,7 +315,9 @@ static bool sch16tParseSample(gyroDev_t *gyro, uint8_t bufferIndex)
 
 static busStatus_e sch16tDmaCallback(uintptr_t arg)
 {
+    // Publish the completed set: flip parity and bump the generation before dataReady is set.
     sch16tRxActive ^= 1;
+    sch16tRxGeneration++;
     return mpuIntCallback(arg);
 }
 
@@ -317,6 +334,7 @@ static void sch16tBuildDmaChain(void)
     };
 
     sch16tRxActive = 0;
+    sch16tRxGeneration = 0;
 
     for (unsigned index = 0; index < SCH16T_SAMPLE_FRAME_COUNT; index++) {
         sch16tFrameToBytes(sch16tFrameRead(registers[index]), sch16tDmaTx[index]);
@@ -338,20 +356,32 @@ static void sch16tBuildDmaChain(void)
             .callback = NULL,
         };
     }
+
+    for (unsigned index = 0; index < SCH16T_SAMPLE_FRAME_COUNT; index++) {
+        sch16tBlockingSegments[index].u.buffers.txData = sch16tDmaTx[index];
+        sch16tBlockingSegments[index].u.buffers.rxData = sch16tBlockingChainRx[index];
+        sch16tBlockingSegments[index].len = SCH16T_FRAME_SIZE;
+        sch16tBlockingSegments[index].negateCS = true;
+        sch16tBlockingSegments[index].callback = NULL;
+    }
+    sch16tBlockingSegments[SCH16T_SAMPLE_FRAME_COUNT] = (busSegment_t){
+        .u.link = {NULL, NULL},
+        .len = 0,
+        .negateCS = true,
+        .callback = NULL,
+    };
 }
 
 static bool sch16tGyroReadBlocking(gyroDev_t *gyro)
 {
+    // Dedicated descriptors and RX, never targeted by the DMA chains: this parse cannot race DMA.
     busSegment_t segments[SCH16T_SAMPLE_FRAME_COUNT + 1];
-    memcpy(segments, sch16tDmaSegments[0], sizeof(segments));
-    segments[SCH16T_SAMPLE_FRAME_COUNT - 1].callback = NULL;
-    segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.dev = NULL;
-    segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.segments = NULL;
+    memcpy(segments, sch16tBlockingSegments, sizeof(segments));
 
     spiSequence(&gyro->dev, segments);
     spiWait(&gyro->dev);
 
-    return sch16tParseSample(gyro, 0);
+    return sch16tParseSample(gyro, sch16tBlockingChainRx + 1);
 }
 
 #ifdef USE_DMA
@@ -474,9 +504,8 @@ static bool sch16tInitOnce(gyroDev_t *gyro)
     sch16tWriteRegister(dev, SCH16T_CTRL_FILT_ACC12, SCH16T_FILT_LPF3_ALL);
     sch16tWriteRegister(dev, SCH16T_CTRL_RATE, SCH16T_CTRL_RATE_VAL);
     sch16tWriteRegister(dev, SCH16T_CTRL_ACC12, SCH16T_CTRL_ACC12_VAL);
-    // DRY re-pulses only after all updated decimated registers are read (datasheet section 5.4.4).
-    // The sample chain reads RATE_XYZ2 and ACC_XYZ2 only, so ACC3 output must remain disabled.
-    sch16tWriteRegister(dev, SCH16T_CTRL_ACC3, SCH16T_CTRL_ACC3_VAL);
+    // ACC_XYZ3 is interpolated, not part of the decimated DRY set, and CTRL_ACC3 only carries
+    // DYN_ACC3[2:0] (datasheet Table 67): leave it at the reset default.
     sch16tWriteRegister(dev, SCH16T_CTRL_USER_IF, SCH16T_CTRL_USER_IF_VAL);
     sch16tWriteRegister(dev, SCH16T_CTRL_MODE, SCH16T_MODE_EN_SENSOR);
     delay(SCH16T_STARTUP_DELAY_MS);
@@ -562,7 +591,19 @@ static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)
             }
             return false;
         }
-        return sch16tParseSample(gyro, sch16tRxActive ^ 1);
+        {
+            // Snapshot the last completed set under a generation seqlock: an ISR preempting the
+            // parse could complete the in-flight chain and start the next one into this set, so
+            // never parse DMA memory directly.
+            uint8_t snapshot[SCH16T_SAMPLE_RESPONSE_COUNT][SCH16T_FRAME_SIZE];
+            unsigned set;
+            uint32_t generation;
+            do {
+                generation = sch16tRxGeneration;
+                set = sch16tRxActive ^ 1;
+            } while (!sch16tSeqlockCopy(&snapshot[0][0], &sch16tDmaRx[set][1][0], sizeof(snapshot), &sch16tRxGeneration, generation));
+            return sch16tParseSample(gyro, snapshot);
+        }
 
     default:
         break;

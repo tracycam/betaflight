@@ -119,8 +119,6 @@
 #define SCH16T_CTRL_ACC12_VAL \
     ((SCH16T_DYN1 << 12) | (SCH16T_DYN1 << 9) | (SCH16T_DEC2 << 6) | (SCH16T_DEC2 << 3) | SCH16T_DEC2)
 
-// DYN_ACC3 = 0001 is preserved while DEC_ACC3 = 0000 disables ACC3 output
-#define SCH16T_CTRL_ACC3_VAL    0x10000
 
 // CTRL_RESET / CTRL_MODE / status values
 #define SCH16T_RESET_SOFT       0xA
@@ -157,6 +155,9 @@ bool sch16tRegisterFrameValid(uint64_t misoFrame, uint16_t sourceAddress);
 
 // Validate a sensor-data response; normal and saturated samples are both valid
 bool sch16tSensorFrameValid(uint64_t misoFrame, uint16_t sourceAddress);
+
+// Copy a sample snapshot; false when the completion ISR bumped the generation during the copy
+bool sch16tSeqlockCopy(uint8_t *dest, const uint8_t *src, unsigned len, volatile uint32_t *generation, uint32_t generationBefore);
 
 // MISO field helpers
 uint16_t sch16tMisoSa(uint64_t misoFrame);

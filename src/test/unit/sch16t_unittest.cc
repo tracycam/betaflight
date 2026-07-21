@@ -230,3 +230,22 @@ TEST(sch16tRegisterMapTest, AddressSanity)
     EXPECT_EQ(0x3B, SCH16T_ASIC_ID);
     EXPECT_EQ(0x3C, SCH16T_COMP_ID);
 }
+
+TEST(sch16tSeqlockTest, StableGenerationCopies)
+{
+    const uint8_t src[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+    uint8_t dest[6] = {0};
+    volatile uint32_t generation = 7;
+
+    EXPECT_TRUE(sch16tSeqlockCopy(dest, src, sizeof(src), &generation, 7));
+    EXPECT_EQ(0, memcmp(dest, src, sizeof(src)));
+}
+
+TEST(sch16tSeqlockTest, ChangedGenerationRejected)
+{
+    const uint8_t src[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+    uint8_t dest[6] = {0};
+    volatile uint32_t generation = 8; // ISR bumped it (e.g.) from 7 to 8 before/during the copy
+
+    EXPECT_FALSE(sch16tSeqlockCopy(dest, src, sizeof(src), &generation, 7));
+}
