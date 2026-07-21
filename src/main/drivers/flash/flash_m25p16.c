@@ -121,6 +121,10 @@ struct {
     // Zbit ZB25VQ128
     // Datasheet: http://zbitsemi.com/upload/file/20201010/20201010174048_82182.pdf
     { 0x5E4018, 104, 50, 256, 256 },
+    // UCUN UC25IQ128
+    // W25Q128-command-compatible SPI NOR flash, 128Mbit (16MB), JEDEC 0xB34018 (MID=B3h, type=40h, cap=18h)
+    // fC1=133MHz (3.0-3.6V), fR(03h read)=50MHz; 4K sector / 64K block erase, 256B page
+    { 0xB34018, 133, 50, 256, 256 },
     // Winbond W25Q128_DTR
     // Datasheet: https://www.winbond.com/resource-files/w25q128jv%20dtr%20revb%2011042016.pdf
     { 0xEF7018, 66, 50, 256, 256 },
