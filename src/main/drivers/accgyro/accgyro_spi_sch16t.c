@@ -53,6 +53,7 @@
 
 #define SCH16T_MISO_DATA_BIT        (1ULL << 47)
 #define SCH16T_MISO_ADDRESS_SHIFT   37
+#define SCH16T_MISO_COMMAND_ERROR_BIT (1ULL << 35)
 #define SCH16T_MISO_STATUS_SHIFT    33
 #define SCH16T_MISO_STATUS_MASK     0x03U
 #define SCH16T_MISO_DCNT_SHIFT      29
@@ -102,10 +103,28 @@ int32_t sch16tParseSensor20(uint64_t misoFrame)
     return sensor;
 }
 
-bool sch16tMisoFrameValid(uint64_t misoFrame)
+bool sch16tMisoCrcOk(uint64_t misoFrame)
 {
-    return sch16tCrc8(misoFrame) == (uint8_t)misoFrame
-        && sch16tMisoStatus(misoFrame) == 0;
+    return sch16tCrc8(misoFrame) == (uint8_t)misoFrame;
+}
+
+bool sch16tRegisterFrameValid(uint64_t misoFrame, uint16_t sourceAddress)
+{
+    return sch16tMisoCrcOk(misoFrame)
+        && (misoFrame & SCH16T_MISO_COMMAND_ERROR_BIT) == 0
+        && !sch16tMisoD(misoFrame)
+        && sch16tMisoSa(misoFrame) == sourceAddress;
+}
+
+bool sch16tSensorFrameValid(uint64_t misoFrame, uint16_t sourceAddress)
+{
+    const uint8_t status = sch16tMisoStatus(misoFrame);
+
+    return sch16tMisoCrcOk(misoFrame)
+        && (misoFrame & SCH16T_MISO_COMMAND_ERROR_BIT) == 0
+        && sch16tMisoD(misoFrame)
+        && sch16tMisoSa(misoFrame) == sourceAddress
+        && (status == 0b00 || status == 0b10);
 }
 
 uint16_t sch16tMisoSa(uint64_t misoFrame)
@@ -144,14 +163,16 @@ bool sch16tMisoD(uint64_t misoFrame)
 #define SCH16T_BLOCKING_FRAME_COUNT    2
 #define SCH16T_SAMPLE_FRAME_COUNT      7
 #define SCH16T_SAMPLE_RESPONSE_COUNT   (SCH16T_SAMPLE_FRAME_COUNT - 1)
+#define SCH16T_DMA_BUFFER_COUNT        2
 #define SCH16T_RESET_PULSE_MS          2
 #define SCH16T_STARTUP_DELAY_MS        250
 #define SCH16T_TEMPERATURE_SCALE       100
 #define SCH16T_EXTI_DETECT_THRESHOLD   1000  // mirrors GYRO_EXTI_DETECT_THRESHOLD (accgyro_mpu.c, file-local there)
 
-static busSegment_t sch16tDmaSegments[SCH16T_SAMPLE_FRAME_COUNT + 1];
+static busSegment_t sch16tDmaSegments[SCH16T_DMA_BUFFER_COUNT][SCH16T_SAMPLE_FRAME_COUNT + 1];
 STATIC_DMA_DATA_AUTO uint8_t sch16tDmaTx[SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
-STATIC_DMA_DATA_AUTO uint8_t sch16tDmaRx[SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
+STATIC_DMA_DATA_AUTO uint8_t sch16tDmaRx[SCH16T_DMA_BUFFER_COUNT][SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
+static volatile uint8_t sch16tRxActive;
 
 STATIC_DMA_DATA_AUTO uint8_t sch16tWriteTx[SCH16T_FRAME_SIZE];
 STATIC_DMA_DATA_AUTO uint8_t sch16tBlockingTx[SCH16T_BLOCKING_FRAME_COUNT][SCH16T_FRAME_SIZE];
@@ -197,7 +218,7 @@ static void sch16tWriteRegister(const extDevice_t *dev, uint16_t addr, uint32_t 
     spiWait(dev);
 }
 
-static bool sch16tReadRegisterBlocking(const extDevice_t *dev, uint16_t addr, uint32_t *value20)
+static bool sch16tReadBlocking(const extDevice_t *dev, uint16_t addr, uint32_t *value20, bool sensorFrame)
 {
     const uint64_t request = sch16tFrameRead(addr);
 
@@ -215,7 +236,10 @@ static bool sch16tReadRegisterBlocking(const extDevice_t *dev, uint16_t addr, ui
     spiWait(dev);
 
     const uint64_t response = sch16tFrameFromBytes(sch16tBlockingRx[1]);
-    if (!sch16tMisoFrameValid(response)) {
+    const bool valid = sensorFrame
+        ? sch16tSensorFrameValid(response, addr)
+        : sch16tRegisterFrameValid(response, addr);
+    if (!valid) {
         return false;
     }
 
@@ -223,13 +247,33 @@ static bool sch16tReadRegisterBlocking(const extDevice_t *dev, uint16_t addr, ui
     return true;
 }
 
-static bool sch16tParseSample(gyroDev_t *gyro)
+static bool sch16tReadRegisterBlocking(const extDevice_t *dev, uint16_t addr, uint32_t *value20)
 {
+    return sch16tReadBlocking(dev, addr, value20, false);
+}
+
+static bool sch16tReadSensorBlocking(const extDevice_t *dev, uint16_t addr, uint32_t *value20)
+{
+    return sch16tReadBlocking(dev, addr, value20, true);
+}
+
+static bool sch16tParseSample(gyroDev_t *gyro, uint8_t bufferIndex)
+{
+    static const uint16_t sourceAddresses[SCH16T_SAMPLE_RESPONSE_COUNT] = {
+        SCH16T_RATE_X2,
+        SCH16T_RATE_Y2,
+        SCH16T_RATE_Z2,
+        SCH16T_ACC_X2,
+        SCH16T_ACC_Y2,
+        SCH16T_ACC_Z2,
+    };
     uint64_t responses[SCH16T_SAMPLE_RESPONSE_COUNT];
 
+    // DCNT is per output (datasheet Tables 31/32), so it cannot validate cross-channel coherence.
+    // DMA writes only the active set; the callback flips parity before publishing dataReady, leaving this set stable.
     for (unsigned index = 0; index < SCH16T_SAMPLE_RESPONSE_COUNT; index++) {
-        responses[index] = sch16tFrameFromBytes(sch16tDmaRx[index + 1]);
-        if (!sch16tMisoFrameValid(responses[index])) {
+        responses[index] = sch16tFrameFromBytes(sch16tDmaRx[bufferIndex][index + 1]);
+        if (!sch16tSensorFrameValid(responses[index], sourceAddresses[index])) {
             // PX4 counts CRC failures; Betaflight drops the complete sample.
             return false;
         }
@@ -253,6 +297,7 @@ static bool sch16tParseSample(gyroDev_t *gyro)
 
 static busStatus_e sch16tDmaCallback(uintptr_t arg)
 {
+    sch16tRxActive ^= 1;
     return mpuIntCallback(arg);
 }
 
@@ -268,22 +313,28 @@ static void sch16tBuildDmaChain(void)
         SCH16T_RATE_X2,
     };
 
+    sch16tRxActive = 0;
+
     for (unsigned index = 0; index < SCH16T_SAMPLE_FRAME_COUNT; index++) {
         sch16tFrameToBytes(sch16tFrameRead(registers[index]), sch16tDmaTx[index]);
-        sch16tDmaSegments[index].u.buffers.txData = sch16tDmaTx[index];
-        sch16tDmaSegments[index].u.buffers.rxData = sch16tDmaRx[index];
-        sch16tDmaSegments[index].len = SCH16T_FRAME_SIZE;
-        sch16tDmaSegments[index].negateCS = true;
-        sch16tDmaSegments[index].callback = NULL;
+        for (unsigned bufferIndex = 0; bufferIndex < SCH16T_DMA_BUFFER_COUNT; bufferIndex++) {
+            sch16tDmaSegments[bufferIndex][index].u.buffers.txData = sch16tDmaTx[index];
+            sch16tDmaSegments[bufferIndex][index].u.buffers.rxData = sch16tDmaRx[bufferIndex][index];
+            sch16tDmaSegments[bufferIndex][index].len = SCH16T_FRAME_SIZE;
+            sch16tDmaSegments[bufferIndex][index].negateCS = true;
+            sch16tDmaSegments[bufferIndex][index].callback = NULL;
+        }
     }
 
-    sch16tDmaSegments[SCH16T_SAMPLE_FRAME_COUNT - 1].callback = sch16tDmaCallback;
-    sch16tDmaSegments[SCH16T_SAMPLE_FRAME_COUNT] = (busSegment_t){
-        .u.link = {NULL, NULL},
-        .len = 0,
-        .negateCS = true,
-        .callback = NULL,
-    };
+    for (unsigned bufferIndex = 0; bufferIndex < SCH16T_DMA_BUFFER_COUNT; bufferIndex++) {
+        sch16tDmaSegments[bufferIndex][SCH16T_SAMPLE_FRAME_COUNT - 1].callback = sch16tDmaCallback;
+        sch16tDmaSegments[bufferIndex][SCH16T_SAMPLE_FRAME_COUNT] = (busSegment_t){
+            .u.link = {NULL, NULL},
+            .len = 0,
+            .negateCS = true,
+            .callback = NULL,
+        };
+    }
 }
 
 #ifdef USE_DMA
@@ -299,7 +350,7 @@ static void sch16tIntExtiHandler(extiCallbackRec_t *cb)
     gyro->gyroLastEXTI = nowCycles;
 
     if (gyro->gyroModeSPI == GYRO_EXTI_INT_DMA) {
-        spiSequence(&gyro->dev, sch16tDmaSegments);
+        spiSequence(&gyro->dev, sch16tDmaSegments[sch16tRxActive]);
     }
 
     gyro->detectedEXTI++;
@@ -324,7 +375,7 @@ static FAST_CODE bool sch16tAccReadSPI(accDev_t *acc)
 static bool sch16tTemperatureRead(gyroDev_t *gyro, int16_t *temperature)
 {
     uint32_t value20;
-    if (!sch16tReadRegisterBlocking(&gyro->dev, SCH16T_TEMP, &value20)) {
+    if (!sch16tReadSensorBlocking(&gyro->dev, SCH16T_TEMP, &value20)) {
         return false;
     }
 
@@ -406,7 +457,7 @@ static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)
     case GYRO_EXTI_NO_INT:
     {
         busSegment_t segments[SCH16T_SAMPLE_FRAME_COUNT + 1];
-        memcpy(segments, sch16tDmaSegments, sizeof(segments));
+        memcpy(segments, sch16tDmaSegments[0], sizeof(segments));
         segments[SCH16T_SAMPLE_FRAME_COUNT - 1].callback = NULL;
         segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.dev = NULL;
         segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.segments = NULL;
@@ -414,11 +465,11 @@ static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)
         spiSequence(&gyro->dev, segments);
         spiWait(&gyro->dev);
 
-        return sch16tParseSample(gyro);
+        return sch16tParseSample(gyro, 0);
     }
 
     case GYRO_EXTI_INT_DMA:
-        return sch16tParseSample(gyro);
+        return sch16tParseSample(gyro, sch16tRxActive ^ 1);
 
     default:
         break;
@@ -460,7 +511,8 @@ uint8_t sch16tSpiDetect(const extDevice_t *dev)
 
     const uint64_t compIdFrame = sch16tFrameFromBytes(sch16tDetectRx[1]);
     const uint64_t asicIdFrame = sch16tFrameFromBytes(sch16tDetectRx[2]);
-    if (!sch16tMisoFrameValid(compIdFrame) || !sch16tMisoFrameValid(asicIdFrame)) {
+    if (!sch16tRegisterFrameValid(compIdFrame, SCH16T_COMP_ID)
+        || !sch16tRegisterFrameValid(asicIdFrame, SCH16T_ASIC_ID)) {
         return MPU_NONE;
     }
 

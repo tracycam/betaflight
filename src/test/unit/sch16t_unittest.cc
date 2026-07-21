@@ -50,11 +50,31 @@ static const uint64_t MISO_SENSOR_POS3520 = 0x8020000DC0DBULL;
 // D=1, SA=0x001, S=00, DCNT=0, SENSOR=0x80000 (-524288), CRC=0xD6
 static const uint64_t MISO_SENSOR_MIN = 0x8020080000D6ULL;
 
-// MISO_SENSOR_NEG512 with frame status S flipped, CRC recomputed with the
-// datasheet algorithm so each frame is CRC-valid but status-invalid
+// MISO_SENSOR_NEG512 with each alternate S status, CRC recomputed with the
+// datasheet algorithm so every status-class test frame remains CRC-valid
 static const uint64_t MISO_STATUS_01 = 0x80220FFE00E8ULL; // S = 01
 static const uint64_t MISO_STATUS_10 = 0x80240FFE0027ULL; // S = 10
 static const uint64_t MISO_STATUS_11 = 0x80260FFE0062ULL; // S = 11
+
+static const uint64_t MISO_D_BIT = 1ULL << 47;
+static const uint64_t MISO_SA_MASK = 0x3FFULL << 37;
+static const uint64_t MISO_CE_BIT = 1ULL << 35;
+static const uint64_t MISO_STATUS_MASK = 0x3ULL << 33;
+
+static uint64_t makeMisoFrame(uint64_t base, bool sensorData, uint16_t sourceAddress, uint8_t status, bool commandError)
+{
+    uint64_t frame = base & ~(MISO_D_BIT | MISO_SA_MASK | MISO_CE_BIT | MISO_STATUS_MASK | 0xFFULL);
+    frame |= (uint64_t)sourceAddress << 37;
+    frame |= (uint64_t)(status & 0x03U) << 33;
+    if (sensorData) {
+        frame |= MISO_D_BIT;
+    }
+    if (commandError) {
+        frame |= MISO_CE_BIT;
+    }
+
+    return frame | sch16tCrc8(frame);
+}
 
 TEST(sch16tCrc8Test, GoldenMosiFrames)
 {
@@ -106,21 +126,71 @@ TEST(sch16tParseSensor20Test, ShiftRight4Truncation)
     EXPECT_EQ(-32, sch16tParseSensor20(MISO_SENSOR_NEG512) >> 4);
 }
 
-TEST(sch16tMisoFrameValidTest, ValidFrame)
+TEST(sch16tMisoCrcOkTest, ValidFrame)
 {
-    EXPECT_TRUE(sch16tMisoFrameValid(MISO_SENSOR_NEG512));
+    EXPECT_TRUE(sch16tMisoCrcOk(MISO_SENSOR_NEG512));
 }
 
-TEST(sch16tMisoFrameValidTest, CorruptedCrc)
+TEST(sch16tMisoCrcOkTest, CorruptedCrc)
 {
-    EXPECT_FALSE(sch16tMisoFrameValid(MISO_SENSOR_NEG512 ^ 0x01ULL)); // bad CRC byte
+    EXPECT_FALSE(sch16tMisoCrcOk(MISO_SENSOR_NEG512 ^ 0x01ULL));
 }
 
-TEST(sch16tMisoFrameValidTest, NonZeroStatusRejected)
+TEST(sch16tRegisterFrameValidTest, InitializationStatusAccepted)
 {
-    EXPECT_FALSE(sch16tMisoFrameValid(MISO_STATUS_01));
-    EXPECT_FALSE(sch16tMisoFrameValid(MISO_STATUS_10));
-    EXPECT_FALSE(sch16tMisoFrameValid(MISO_STATUS_11));
+    const uint64_t frame = makeMisoFrame(MISO_SENSOR_NEG512, false, SCH16T_STAT_SUM, 0b11, false);
+    EXPECT_TRUE(sch16tRegisterFrameValid(frame, SCH16T_STAT_SUM));
+}
+
+TEST(sch16tRegisterFrameValidTest, CommandErrorRejected)
+{
+    const uint64_t frame = makeMisoFrame(MISO_SENSOR_NEG512, false, SCH16T_STAT_SUM, 0b00, true);
+    EXPECT_FALSE(sch16tRegisterFrameValid(frame, SCH16T_STAT_SUM));
+}
+
+TEST(sch16tRegisterFrameValidTest, SourceAddressMismatchRejected)
+{
+    const uint64_t frame = makeMisoFrame(MISO_SENSOR_NEG512, false, SCH16T_STAT_SUM, 0b00, false);
+    EXPECT_FALSE(sch16tRegisterFrameValid(frame, SCH16T_STAT_COM));
+}
+
+TEST(sch16tRegisterFrameValidTest, SensorFrameRejected)
+{
+    EXPECT_FALSE(sch16tRegisterFrameValid(MISO_SENSOR_NEG512, SCH16T_RATE_X1));
+}
+
+TEST(sch16tSensorFrameValidTest, NormalFrameAccepted)
+{
+    EXPECT_TRUE(sch16tSensorFrameValid(MISO_SENSOR_NEG512, SCH16T_RATE_X1));
+}
+
+TEST(sch16tSensorFrameValidTest, SaturationAccepted)
+{
+    // Datasheet Table 20: S=10 is valid sensor data clipped at the configured range.
+    EXPECT_TRUE(sch16tSensorFrameValid(MISO_STATUS_10, SCH16T_RATE_X1));
+}
+
+TEST(sch16tSensorFrameValidTest, ErrorAndInitializationRejected)
+{
+    EXPECT_FALSE(sch16tSensorFrameValid(MISO_STATUS_01, SCH16T_RATE_X1));
+    EXPECT_FALSE(sch16tSensorFrameValid(MISO_STATUS_11, SCH16T_RATE_X1));
+}
+
+TEST(sch16tSensorFrameValidTest, CommandErrorRejected)
+{
+    const uint64_t frame = makeMisoFrame(MISO_SENSOR_NEG512, true, SCH16T_RATE_X1, 0b00, true);
+    EXPECT_FALSE(sch16tSensorFrameValid(frame, SCH16T_RATE_X1));
+}
+
+TEST(sch16tSensorFrameValidTest, SourceAddressMismatchRejected)
+{
+    EXPECT_FALSE(sch16tSensorFrameValid(MISO_SENSOR_NEG512, SCH16T_RATE_Y1));
+}
+
+TEST(sch16tSensorFrameValidTest, RegisterFrameRejected)
+{
+    const uint64_t frame = makeMisoFrame(MISO_SENSOR_NEG512, false, SCH16T_RATE_X1, 0b00, false);
+    EXPECT_FALSE(sch16tSensorFrameValid(frame, SCH16T_RATE_X1));
 }
 
 TEST(sch16tMisoFieldTest, DatasheetExampleDecode)

@@ -41,14 +41,16 @@
 //   [7:0]   CRC8  - CRC-8 (poly 0x2F, init 0xFF, MSB-first) over bits 47..8
 //
 // MISO frame layout:
-//   [47]    D     - 1 = frame contains sensor data
-//   [46:37] SA    - source address
-//   [36]    IDS   - internal data status (redundant error flag)
-//   [35]    CE    - command error indication
-//   [34:33] S     - frame status, 0 = OK
-//   [32:29] DCNT  - data counter
+//   [47]    D     - 1 = RATE/ACC/TEMP sensor data, 0 = other register data
+//   [46:37] SA    - source address, echoes the requested register address
+//   [36]    IDS   - redundant common-error indication; S carries the accurate status
+//   [35]    CE    - command error; 1 indicates an invalid or desynchronized request
+//   [34:33] S     - 00 normal, 01 error, 10 valid saturated data, 11 initialization
+//                    S is undefined before EOI and is always 00 on write responses
+//   [32:29] DCNT  - per-output counter for decimated RATE_XYZ2/ACC_XYZ2 sensor data;
+//                    unused on register frames and not comparable across channels
 //   [28]    0     - reserved
-//   [27:8]  SENSOR- 20-bit sensor data (two's complement)
+//   [27:8]  DATA  - 20-bit SENSOR data (two's complement) or register INFO data
 //   [7:0]   CRC8  - CRC-8 (poly 0x2F, init 0xFF, MSB-first) over bits 47..8
 
 // Register addresses
@@ -137,8 +139,14 @@ uint64_t sch16tFrameWrite(uint16_t addr, uint32_t data20);
 // Extract the sign-extended 20-bit SENSOR field (bits 27..8) from a MISO frame
 int32_t sch16tParseSensor20(uint64_t misoFrame);
 
-// Validate a MISO frame: CRC8 matches and S[1:0] status bits (34..33) == 0
-bool sch16tMisoFrameValid(uint64_t misoFrame);
+// Validate only the MISO CRC8 field
+bool sch16tMisoCrcOk(uint64_t misoFrame);
+
+// Validate an other-data register response; S and DCNT are not meaningful before EOI/on this frame class
+bool sch16tRegisterFrameValid(uint64_t misoFrame, uint16_t sourceAddress);
+
+// Validate a sensor-data response; normal and saturated samples are both valid
+bool sch16tSensorFrameValid(uint64_t misoFrame, uint16_t sourceAddress);
 
 // MISO field helpers
 uint16_t sch16tMisoSa(uint64_t misoFrame);
