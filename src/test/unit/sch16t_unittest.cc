@@ -69,6 +69,7 @@ static const uint64_t MISO_D_BIT = 1ULL << 47;
 static const uint64_t MISO_SA_MASK = 0x3FFULL << 37;
 static const uint64_t MISO_CE_BIT = 1ULL << 35;
 static const uint64_t MISO_STATUS_MASK = 0x3ULL << 33;
+static const uint64_t MISO_DCNT_MASK = 0xFULL << 29;
 
 static uint64_t makeMisoFrame(uint64_t base, bool sensorData, uint16_t sourceAddress, uint8_t status, bool commandError)
 {
@@ -82,6 +83,13 @@ static uint64_t makeMisoFrame(uint64_t base, bool sensorData, uint16_t sourceAdd
         frame |= MISO_CE_BIT;
     }
 
+    return frame | sch16tCrc8(frame);
+}
+
+static uint64_t withDcnt(uint64_t base, uint8_t dcnt)
+{
+    uint64_t frame = base & ~(MISO_DCNT_MASK | 0xFFULL);
+    frame |= (uint64_t)(dcnt & 0x0FU) << 29;
     return frame | sch16tCrc8(frame);
 }
 
@@ -207,6 +215,82 @@ TEST(sch16tMisoFieldTest, DatasheetExampleDecode)
     EXPECT_EQ(0, sch16tMisoStatus(MISO_SENSOR_NEG512));
     EXPECT_EQ(0x001, sch16tMisoSa(MISO_SENSOR_NEG512));
     EXPECT_TRUE(sch16tMisoD(MISO_SENSOR_NEG512));
+}
+
+TEST(sch16tMisoFieldTest, ExtractsDcnt)
+{
+    EXPECT_EQ(0, sch16tMisoDcnt(withDcnt(MISO_SENSOR_NEG512, 0)));
+    EXPECT_EQ(7, sch16tMisoDcnt(withDcnt(MISO_SENSOR_NEG512, 7)));
+    EXPECT_EQ(15, sch16tMisoDcnt(withDcnt(MISO_SENSOR_NEG512, 15)));
+}
+
+TEST(sch16tFreshnessTest, AcceptsIndependentCountersAndWrap)
+{
+    sch16tFreshness_t state;
+    sch16tFreshnessReset(&state);
+    const uint8_t first[SCH16T_SENSOR_CHANNEL_COUNT] = {15, 7, 3, 12, 5, 1};
+    const uint8_t next[SCH16T_SENSOR_CHANNEL_COUNT] = {0, 8, 4, 13, 6, 2};
+
+    EXPECT_TRUE(sch16tFreshnessAccept(&state, first, 100));
+    EXPECT_TRUE(sch16tFreshnessIsHealthy(&state));
+    EXPECT_EQ(1U, state.acceptedGeneration);
+    EXPECT_TRUE(sch16tFreshnessAccept(&state, next, 269));
+    EXPECT_EQ(2U, state.acceptedGeneration);
+}
+
+TEST(sch16tFreshnessTest, RejectsFrozenChannelAndFailsAfterEightMisses)
+{
+    sch16tFreshness_t state;
+    sch16tFreshnessReset(&state);
+    const uint8_t first[SCH16T_SENSOR_CHANNEL_COUNT] = {1, 2, 3, 4, 5, 6};
+    const uint8_t frozen[SCH16T_SENSOR_CHANNEL_COUNT] = {2, 3, 3, 5, 6, 7};
+    ASSERT_TRUE(sch16tFreshnessAccept(&state, first, 100));
+
+    for (unsigned miss = 1; miss < SCH16T_MAX_MISSED_SAMPLES; miss++) {
+        EXPECT_FALSE(sch16tFreshnessAccept(&state, frozen, 100 + miss));
+        EXPECT_TRUE(sch16tFreshnessIsHealthy(&state));
+    }
+    EXPECT_FALSE(sch16tFreshnessAccept(&state, frozen, 108));
+    EXPECT_FALSE(sch16tFreshnessIsHealthy(&state));
+    EXPECT_EQ(1U, state.acceptedGeneration);
+}
+
+TEST(sch16tFreshnessTest, EnforcesAgeAndRecoveryHysteresis)
+{
+    sch16tFreshness_t state;
+    sch16tFreshnessReset(&state);
+    uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT] = {1, 2, 3, 4, 5, 6};
+    ASSERT_TRUE(sch16tFreshnessAccept(&state, dcnt, 100));
+
+    sch16tFreshnessMiss(&state, 2099);
+    EXPECT_TRUE(sch16tFreshnessIsHealthy(&state));
+    sch16tFreshnessMiss(&state, 2100);
+    EXPECT_FALSE(sch16tFreshnessIsHealthy(&state));
+
+    for (unsigned index = 0; index < SCH16T_SENSOR_CHANNEL_COUNT; index++) {
+        dcnt[index]++;
+    }
+    EXPECT_TRUE(sch16tFreshnessAccept(&state, dcnt, 3000));
+    EXPECT_FALSE(sch16tFreshnessIsHealthy(&state));
+
+    for (unsigned index = 0; index < SCH16T_SENSOR_CHANNEL_COUNT; index++) {
+        dcnt[index]++;
+    }
+    EXPECT_TRUE(sch16tFreshnessAccept(&state, dcnt, 52999));
+    EXPECT_FALSE(sch16tFreshnessIsHealthy(&state));
+
+    for (unsigned index = 0; index < SCH16T_SENSOR_CHANNEL_COUNT; index++) {
+        dcnt[index]++;
+    }
+    EXPECT_TRUE(sch16tFreshnessAccept(&state, dcnt, 53000));
+    EXPECT_TRUE(sch16tFreshnessIsHealthy(&state));
+}
+
+TEST(sch16tFreshnessTest, RejectsSamplesAtTimeoutBoundary)
+{
+    EXPECT_TRUE(sch16tSampleIsRecent(2099, 100));
+    EXPECT_FALSE(sch16tSampleIsRecent(2100, 100));
+    EXPECT_TRUE(sch16tSampleIsRecent(50, UINT32_MAX - 100));
 }
 
 TEST(sch16tConfigValueTest, CtrlRateValue)

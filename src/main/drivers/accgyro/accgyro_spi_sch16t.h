@@ -137,6 +137,29 @@
 // ACC12: 200 LSB/(m/s^2) * 9.80665 m/s^2 = 1961 LSB/g
 #define SCH16T_ACC_1G           1961
 
+#define SCH16T_SENSOR_CHANNEL_COUNT  6
+// Fail before the 4-bit DCNT can wrap; the time limit covers scheduler-rate variation.
+#define SCH16T_MAX_MISSED_SAMPLES    8
+#define SCH16T_SAMPLE_TIMEOUT_US      2000
+// Match the existing gyro overflow recovery hysteresis to avoid health flapping.
+#define SCH16T_RECOVERY_TIME_US       50000
+
+typedef enum {
+    SCH16T_HEALTHY,
+    SCH16T_UNHEALTHY,
+    SCH16T_RECOVERING,
+} sch16tHealthState_e;
+
+typedef struct {
+    uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT];
+    uint8_t missedSamples;
+    bool hasSample;
+    uint32_t lastAcceptedAtUs;
+    uint32_t recoveryStartedAtUs;
+    uint32_t acceptedGeneration;
+    sch16tHealthState_e health;
+} sch16tFreshness_t;
+
 // Pure protocol functions (host-testable, no SPI types in signatures)
 
 // CRC-8 over bits 47..8 of a 48-bit frame (poly 0x2F, init 0xFF, MSB-first)
@@ -160,6 +183,12 @@ bool sch16tSensorFrameValid(uint64_t misoFrame, uint16_t sourceAddress);
 
 // Copy a sample snapshot; false when the completion ISR bumped the generation during the copy
 bool sch16tSeqlockCopy(uint8_t *dest, const uint8_t *src, unsigned len, volatile uint32_t *generation, uint32_t generationBefore);
+
+void sch16tFreshnessReset(sch16tFreshness_t *state);
+bool sch16tFreshnessAccept(sch16tFreshness_t *state, const uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT], uint32_t nowUs);
+void sch16tFreshnessMiss(sch16tFreshness_t *state, uint32_t nowUs);
+bool sch16tFreshnessIsHealthy(const sch16tFreshness_t *state);
+bool sch16tSampleIsRecent(uint32_t nowUs, uint32_t completedAtUs);
 
 // MISO field helpers
 uint16_t sch16tMisoSa(uint64_t misoFrame);

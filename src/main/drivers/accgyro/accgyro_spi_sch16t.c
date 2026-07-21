@@ -163,6 +163,64 @@ STATIC_UNIT_TESTED busStatus_e sch16tFrameGapCallback(uintptr_t arg)
     return BUS_READY;
 }
 
+void sch16tFreshnessReset(sch16tFreshness_t *state)
+{
+    memset(state, 0, sizeof(*state));
+    state->health = SCH16T_HEALTHY;
+}
+
+void sch16tFreshnessMiss(sch16tFreshness_t *state, uint32_t nowUs)
+{
+    if (state->missedSamples < UINT8_MAX) {
+        state->missedSamples++;
+    }
+
+    const bool sampleExpired = state->hasSample
+        && (uint32_t)(nowUs - state->lastAcceptedAtUs) >= SCH16T_SAMPLE_TIMEOUT_US;
+    if (state->missedSamples >= SCH16T_MAX_MISSED_SAMPLES || sampleExpired) {
+        state->health = SCH16T_UNHEALTHY;
+        state->recoveryStartedAtUs = 0;
+    }
+}
+
+bool sch16tFreshnessAccept(sch16tFreshness_t *state, const uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT], uint32_t nowUs)
+{
+    if (state->hasSample) {
+        for (unsigned index = 0; index < SCH16T_SENSOR_CHANNEL_COUNT; index++) {
+            if (dcnt[index] == state->dcnt[index]) {
+                sch16tFreshnessMiss(state, nowUs);
+                return false;
+            }
+        }
+    }
+
+    memcpy(state->dcnt, dcnt, sizeof(state->dcnt));
+    state->hasSample = true;
+    state->missedSamples = 0;
+    state->lastAcceptedAtUs = nowUs;
+    state->acceptedGeneration++;
+
+    if (state->health == SCH16T_UNHEALTHY) {
+        state->health = SCH16T_RECOVERING;
+        state->recoveryStartedAtUs = nowUs;
+    } else if (state->health == SCH16T_RECOVERING
+        && (uint32_t)(nowUs - state->recoveryStartedAtUs) >= SCH16T_RECOVERY_TIME_US) {
+        state->health = SCH16T_HEALTHY;
+    }
+
+    return true;
+}
+
+bool sch16tFreshnessIsHealthy(const sch16tFreshness_t *state)
+{
+    return state->health == SCH16T_HEALTHY;
+}
+
+bool sch16tSampleIsRecent(uint32_t nowUs, uint32_t completedAtUs)
+{
+    return (uint32_t)(nowUs - completedAtUs) < SCH16T_SAMPLE_TIMEOUT_US;
+}
+
 #endif // USE_ACCGYRO_SCH16T || UNIT_TEST
 
 #if defined(USE_ACCGYRO_SCH16T) && !defined(UNIT_TEST)
@@ -176,7 +234,7 @@ STATIC_UNIT_TESTED busStatus_e sch16tFrameGapCallback(uintptr_t arg)
 #define SCH16T_DETECT_FRAME_COUNT      3
 #define SCH16T_BLOCKING_FRAME_COUNT    2
 #define SCH16T_SAMPLE_FRAME_COUNT      7
-#define SCH16T_SAMPLE_RESPONSE_COUNT   (SCH16T_SAMPLE_FRAME_COUNT - 1)
+#define SCH16T_SAMPLE_RESPONSE_COUNT   SCH16T_SENSOR_CHANNEL_COUNT
 #define SCH16T_DMA_BUFFER_COUNT        2
 #define SCH16T_STATUS_REGISTER_COUNT   10
 #define SCH16T_CONFIG_REGISTER_COUNT   5
@@ -191,6 +249,10 @@ STATIC_DMA_DATA_AUTO uint8_t sch16tDmaRx[SCH16T_DMA_BUFFER_COUNT][SCH16T_SAMPLE_
 static volatile uint8_t sch16tRxActive;
 // Bumped by the completion callback after each parity flip; used by the snapshot seqlock.
 static volatile uint32_t sch16tRxGeneration;
+static volatile uint32_t sch16tRxCompletedAtUs[SCH16T_DMA_BUFFER_COUNT];
+static uint32_t sch16tLastEvaluatedGeneration;
+static uint32_t sch16tAccConsumedGeneration;
+static sch16tFreshness_t sch16tFreshness;
 
 STATIC_DMA_DATA_AUTO uint8_t sch16tWriteTx[SCH16T_FRAME_SIZE];
 STATIC_DMA_DATA_AUTO uint8_t sch16tBlockingTx[SCH16T_BLOCKING_FRAME_COUNT][SCH16T_FRAME_SIZE];
@@ -280,7 +342,14 @@ static bool sch16tReadSensorBlocking(const extDevice_t *dev, uint16_t addr, uint
     return sch16tReadBlocking(dev, addr, value20, true);
 }
 
-static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPLE_RESPONSE_COUNT][SCH16T_FRAME_SIZE])
+static bool sch16tRecordMiss(gyroDev_t *gyro, uint32_t nowUs)
+{
+    sch16tFreshnessMiss(&sch16tFreshness, nowUs);
+    gyro->runtimeHealthy = sch16tFreshnessIsHealthy(&sch16tFreshness);
+    return false;
+}
+
+static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPLE_RESPONSE_COUNT][SCH16T_FRAME_SIZE], uint32_t nowUs)
 {
     static const uint16_t sourceAddresses[SCH16T_SAMPLE_RESPONSE_COUNT] = {
         SCH16T_RATE_X2,
@@ -291,15 +360,19 @@ static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPL
         SCH16T_ACC_Z2,
     };
     uint64_t responses[SCH16T_SAMPLE_RESPONSE_COUNT];
+    uint8_t dcnt[SCH16T_SAMPLE_RESPONSE_COUNT];
 
-    // DCNT is per output (datasheet Tables 31/32), so it cannot validate cross-channel coherence;
-    // callers pass a race-free frame set (DMA path snapshots under the generation seqlock).
     for (unsigned index = 0; index < SCH16T_SAMPLE_RESPONSE_COUNT; index++) {
         responses[index] = sch16tFrameFromBytes(frames[index]);
         if (!sch16tSensorFrameValid(responses[index], sourceAddresses[index])) {
-            // PX4 counts CRC failures; Betaflight drops the complete sample.
-            return false;
+            return sch16tRecordMiss(gyro, nowUs);
         }
+        dcnt[index] = sch16tMisoDcnt(responses[index]);
+    }
+
+    if (!sch16tFreshnessAccept(&sch16tFreshness, dcnt, nowUs)) {
+        gyro->runtimeHealthy = sch16tFreshnessIsHealthy(&sch16tFreshness);
+        return false;
     }
 
     int16_t gyroRaw[XYZ_AXIS_COUNT];
@@ -315,13 +388,15 @@ static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPL
         sch16tAccRaw[axis] = accRaw[axis];
     }
 
+    gyro->runtimeHealthy = sch16tFreshnessIsHealthy(&sch16tFreshness);
     return true;
 }
 
 static busStatus_e sch16tDmaCallback(uintptr_t arg)
 {
     sch16tFrameGapCallback(arg);
-    // Publish the completed set: flip parity and bump the generation before dataReady is set.
+    sch16tRxCompletedAtUs[sch16tRxActive] = microsISR();
+    __sync_synchronize();
     sch16tRxActive ^= 1;
     sch16tRxGeneration++;
     return mpuIntCallback(arg);
@@ -341,6 +416,12 @@ static void sch16tBuildDmaChain(void)
 
     sch16tRxActive = 0;
     sch16tRxGeneration = 0;
+    sch16tLastEvaluatedGeneration = 0;
+    sch16tAccConsumedGeneration = 0;
+    for (unsigned index = 0; index < SCH16T_DMA_BUFFER_COUNT; index++) {
+        sch16tRxCompletedAtUs[index] = 0;
+    }
+    sch16tFreshnessReset(&sch16tFreshness);
 
     for (unsigned index = 0; index < SCH16T_SAMPLE_FRAME_COUNT; index++) {
         sch16tFrameToBytes(sch16tFrameRead(registers[index]), sch16tDmaTx[index]);
@@ -387,7 +468,7 @@ static bool sch16tGyroReadBlocking(gyroDev_t *gyro)
     spiSequence(&gyro->dev, segments);
     spiWait(&gyro->dev);
 
-    return sch16tParseSample(gyro, sch16tBlockingChainRx + 1);
+    return sch16tParseSample(gyro, sch16tBlockingChainRx + 1, micros());
 }
 
 #ifdef USE_DMA
@@ -418,9 +499,15 @@ static void sch16tAccInit(accDev_t *acc)
 
 static FAST_CODE bool sch16tAccReadSPI(accDev_t *acc)
 {
+    const uint32_t generation = sch16tFreshness.acceptedGeneration;
+    if (generation == sch16tAccConsumedGeneration) {
+        return false;
+    }
+
     for (unsigned axis = 0; axis < XYZ_AXIS_COUNT; axis++) {
         acc->ADCRaw[axis] = sch16tAccRaw[axis];
     }
+    sch16tAccConsumedGeneration = generation;
 
     return true;
 }
@@ -596,26 +683,30 @@ static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)
         return sch16tGyroReadBlocking(gyro);
 
     case GYRO_EXTI_INT_DMA:
-        if (!gyro->dataReady) {
-            // With no completed chain, an in-flight chain has no new data. If idle, the DRY latch stalled:
-            // no new pulse occurs until all sensor data is read (datasheet section 5.4.4), so re-kick it.
+        if (sch16tRxGeneration == sch16tLastEvaluatedGeneration) {
             if (!spiIsBusy(&gyro->dev)) {
                 return sch16tGyroReadBlocking(gyro);
             }
-            return false;
+            return sch16tRecordMiss(gyro, micros());
         }
         {
-            // Snapshot the last completed set under a generation seqlock: an ISR preempting the
-            // parse could complete the in-flight chain and start the next one into this set, so
-            // never parse DMA memory directly.
             uint8_t snapshot[SCH16T_SAMPLE_RESPONSE_COUNT][SCH16T_FRAME_SIZE];
             unsigned set;
             uint32_t generation;
+            uint32_t completedAtUs;
             do {
                 generation = sch16tRxGeneration;
                 set = sch16tRxActive ^ 1;
+                completedAtUs = sch16tRxCompletedAtUs[set];
             } while (!sch16tSeqlockCopy(&snapshot[0][0], &sch16tDmaRx[set][1][0], sizeof(snapshot), &sch16tRxGeneration, generation));
-            return sch16tParseSample(gyro, snapshot);
+            sch16tLastEvaluatedGeneration = generation;
+            gyro->dataReady = false;
+
+            const uint32_t nowUs = micros();
+            if (!sch16tSampleIsRecent(nowUs, completedAtUs)) {
+                return sch16tRecordMiss(gyro, nowUs);
+            }
+            return sch16tParseSample(gyro, snapshot, nowUs);
         }
 
     default:
