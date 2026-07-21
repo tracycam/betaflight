@@ -70,3 +70,11 @@ compile_commands.json
 
 # Windows Zone.Identifier ADS files
 *:Zone.Identifier
+
+# local agent/tooling artifacts
+/.omo/
+/.opencode/
+
+# local datasheets and vendor modules (not for upstream)
+/docs/UC25IQ128*
+/lib/modules/
