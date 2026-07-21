@@ -164,10 +164,13 @@ bool sch16tMisoD(uint64_t misoFrame)
 #define SCH16T_SAMPLE_FRAME_COUNT      7
 #define SCH16T_SAMPLE_RESPONSE_COUNT   (SCH16T_SAMPLE_FRAME_COUNT - 1)
 #define SCH16T_DMA_BUFFER_COUNT        2
+#define SCH16T_STATUS_REGISTER_COUNT   10
+#define SCH16T_CONFIG_REGISTER_COUNT   5
+#define SCH16T_INIT_ATTEMPTS           2
 #define SCH16T_RESET_PULSE_MS          2
 #define SCH16T_STARTUP_DELAY_MS        250
+#define SCH16T_EOI_DELAY_MS            5
 #define SCH16T_TEMPERATURE_SCALE       100
-#define SCH16T_EXTI_DETECT_THRESHOLD   1000  // mirrors GYRO_EXTI_DETECT_THRESHOLD (accgyro_mpu.c, file-local there)
 
 static busSegment_t sch16tDmaSegments[SCH16T_DMA_BUFFER_COUNT][SCH16T_SAMPLE_FRAME_COUNT + 1];
 STATIC_DMA_DATA_AUTO uint8_t sch16tDmaTx[SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
@@ -337,6 +340,20 @@ static void sch16tBuildDmaChain(void)
     }
 }
 
+static bool sch16tGyroReadBlocking(gyroDev_t *gyro)
+{
+    busSegment_t segments[SCH16T_SAMPLE_FRAME_COUNT + 1];
+    memcpy(segments, sch16tDmaSegments[0], sizeof(segments));
+    segments[SCH16T_SAMPLE_FRAME_COUNT - 1].callback = NULL;
+    segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.dev = NULL;
+    segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.segments = NULL;
+
+    spiSequence(&gyro->dev, segments);
+    spiWait(&gyro->dev);
+
+    return sch16tParseSample(gyro, 0);
+}
+
 #ifdef USE_DMA
 static void sch16tIntExtiHandler(extiCallbackRec_t *cb)
 {
@@ -383,12 +400,63 @@ static bool sch16tTemperatureRead(gyroDev_t *gyro, int16_t *temperature)
     return true;
 }
 
-static void sch16tGyroInit(gyroDev_t *gyro)
+static bool sch16tReadStatusRegisters(const extDevice_t *dev, uint32_t values[SCH16T_STATUS_REGISTER_COUNT])
+{
+    static const uint16_t registers[SCH16T_STATUS_REGISTER_COUNT] = {
+        SCH16T_STAT_SUM,
+        SCH16T_STAT_SUM_SAT,
+        SCH16T_STAT_COM,
+        SCH16T_STAT_RATE_COM,
+        SCH16T_STAT_RATE_X,
+        SCH16T_STAT_RATE_Y,
+        SCH16T_STAT_RATE_Z,
+        SCH16T_STAT_ACC_X,
+        SCH16T_STAT_ACC_Y,
+        SCH16T_STAT_ACC_Z,
+    };
+    bool valid = true;
+
+    for (unsigned index = 0; index < SCH16T_STATUS_REGISTER_COUNT; index++) {
+        values[index] = 0;
+        if (!sch16tReadRegisterBlocking(dev, registers[index], &values[index])) {
+            valid = false;
+        }
+    }
+
+    return valid;
+}
+
+static bool sch16tConfigRegistersValid(const extDevice_t *dev)
+{
+    static const uint16_t registers[SCH16T_CONFIG_REGISTER_COUNT] = {
+        SCH16T_CTRL_FILT_RATE,
+        SCH16T_CTRL_FILT_ACC12,
+        SCH16T_CTRL_RATE,
+        SCH16T_CTRL_ACC12,
+        SCH16T_CTRL_USER_IF,
+    };
+    static const uint32_t expectedValues[SCH16T_CONFIG_REGISTER_COUNT] = {
+        SCH16T_FILT_LPF3_ALL,
+        SCH16T_FILT_LPF3_ALL,
+        SCH16T_CTRL_RATE_VAL,
+        SCH16T_CTRL_ACC12_VAL,
+        SCH16T_CTRL_USER_IF_VAL,
+    };
+    bool valid = true;
+
+    for (unsigned index = 0; index < SCH16T_CONFIG_REGISTER_COUNT; index++) {
+        uint32_t value = 0;
+        if (!sch16tReadRegisterBlocking(dev, registers[index], &value) || value != expectedValues[index]) {
+            valid = false;
+        }
+    }
+
+    return valid;
+}
+
+static bool sch16tInitOnce(gyroDev_t *gyro)
 {
     extDevice_t *dev = &gyro->dev;
-
-    spiSetClkPhasePolarity(dev, true);
-    spiSetClkDivisor(dev, spiCalculateDivider(SCH16T_MAX_SPI_CLK_HZ));
 
 #if defined(GYRO_1_RST_PIN)
     const IO_t resetPin = IOGetByTag(IO_TAG(GYRO_1_RST_PIN));
@@ -406,27 +474,52 @@ static void sch16tGyroInit(gyroDev_t *gyro)
     sch16tWriteRegister(dev, SCH16T_CTRL_FILT_ACC12, SCH16T_FILT_LPF3_ALL);
     sch16tWriteRegister(dev, SCH16T_CTRL_RATE, SCH16T_CTRL_RATE_VAL);
     sch16tWriteRegister(dev, SCH16T_CTRL_ACC12, SCH16T_CTRL_ACC12_VAL);
+    // DRY re-pulses only after all updated decimated registers are read (datasheet section 5.4.4).
+    // The sample chain reads RATE_XYZ2 and ACC_XYZ2 only, so ACC3 output must remain disabled.
+    sch16tWriteRegister(dev, SCH16T_CTRL_ACC3, SCH16T_CTRL_ACC3_VAL);
     sch16tWriteRegister(dev, SCH16T_CTRL_USER_IF, SCH16T_CTRL_USER_IF_VAL);
     sch16tWriteRegister(dev, SCH16T_CTRL_MODE, SCH16T_MODE_EN_SENSOR);
     delay(SCH16T_STARTUP_DELAY_MS);
 
-    uint32_t statSum = 0;
-    const bool statSumValid = sch16tReadRegisterBlocking(dev, SCH16T_STAT_SUM, &statSum);
-    if (!statSumValid || statSum != SCH16T_STAT_SUM_OK) {
-        // TODO(DEBUG_LEVEL): expose startup status; gyro init callbacks cannot report failure.
-        (void)0;
-    }
-
-    uint32_t status;
-    (void)sch16tReadRegisterBlocking(dev, SCH16T_STAT_SUM_SAT, &status);
-    (void)sch16tReadRegisterBlocking(dev, SCH16T_STAT_COM, &status);
+    uint32_t statusValues[SCH16T_STATUS_REGISTER_COUNT];
+    // Clear startup flags before EOI, then validate the second of two post-EOI status passes.
+    (void)sch16tReadStatusRegisters(dev, statusValues);
 
     sch16tWriteRegister(dev, SCH16T_CTRL_MODE, SCH16T_MODE_EOI);
+    delay(SCH16T_EOI_DELAY_MS);
+
+    (void)sch16tReadStatusRegisters(dev, statusValues);
+    const bool statusFramesValid = sch16tReadStatusRegisters(dev, statusValues);
+    bool statusValuesValid = true;
+    for (unsigned index = 0; index < SCH16T_STATUS_REGISTER_COUNT; index++) {
+        if (statusValues[index] != SCH16T_STAT_SUM_OK) {
+            statusValuesValid = false;
+        }
+    }
+
+    const bool configValid = sch16tConfigRegistersValid(dev);
+    return statusFramesValid && statusValuesValid && configValid;
+}
+
+static void sch16tGyroInit(gyroDev_t *gyro)
+{
+    extDevice_t *dev = &gyro->dev;
+
+    spiSetClkPhasePolarity(dev, true);
+    spiSetClkDivisor(dev, spiCalculateDivider(SCH16T_MAX_SPI_CLK_HZ));
+
+    for (unsigned attempt = 0; attempt < SCH16T_INIT_ATTEMPTS; attempt++) {
+        if (sch16tInitOnce(gyro)) {
+            break;
+        }
+    }
+    // gyro init callbacks have no failure channel; after two failed attempts runtime S=01 frames drop samples.
 
     gyro->scale = SCH16T_GYRO_SCALE_DPS;
     gyro->mpuDividerDrops = 0;
     sch16tBuildDmaChain();
     mpuGyroInit(gyro);
+    (void)sch16tGyroReadBlocking(gyro);
 }
 
 static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)
@@ -435,40 +528,40 @@ static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)
     case GYRO_EXTI_INIT:
         gyro->gyroDmaMaxDuration = 5;
 
-        if (gyro->detectedEXTI > SCH16T_EXTI_DETECT_THRESHOLD) {
-#ifdef USE_DMA
-            if (spiUseDMA(&gyro->dev)) {
-                gyro->dev.callbackArg = (uintptr_t)gyro;
-
-                // The common two-segment MPU chain cannot hold seven SafeSPI frames.
-                EXTIHandlerInit(&gyro->exti, sch16tIntExtiHandler);
-                gyro->gyroModeSPI = GYRO_EXTI_INT_DMA;
-            } else
-#endif
-            {
-                gyro->gyroModeSPI = GYRO_EXTI_INT;
-            }
-        } else {
+        if (gyro->mpuIntExtiTag == IO_TAG_NONE) {
+            // No EXTI/DRY line on this target: poll the sensor from the gyro task.
             gyro->gyroModeSPI = GYRO_EXTI_NO_INT;
+            return sch16tGyroReadBlocking(gyro);
         }
-        break;
+
+#ifdef USE_DMA
+        if (spiUseDMA(&gyro->dev)) {
+            gyro->dev.callbackArg = (uintptr_t)gyro;
+
+            // The common two-segment MPU chain cannot hold seven SafeSPI frames.
+            EXTIHandlerInit(&gyro->exti, sch16tIntExtiHandler);
+            gyro->gyroModeSPI = GYRO_EXTI_INT_DMA;
+        } else
+#endif
+        {
+            gyro->gyroModeSPI = GYRO_EXTI_INT;
+        }
+
+        return sch16tGyroReadBlocking(gyro);
 
     case GYRO_EXTI_INT:
     case GYRO_EXTI_NO_INT:
-    {
-        busSegment_t segments[SCH16T_SAMPLE_FRAME_COUNT + 1];
-        memcpy(segments, sch16tDmaSegments[0], sizeof(segments));
-        segments[SCH16T_SAMPLE_FRAME_COUNT - 1].callback = NULL;
-        segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.dev = NULL;
-        segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.segments = NULL;
-
-        spiSequence(&gyro->dev, segments);
-        spiWait(&gyro->dev);
-
-        return sch16tParseSample(gyro, 0);
-    }
+        return sch16tGyroReadBlocking(gyro);
 
     case GYRO_EXTI_INT_DMA:
+        if (!gyro->dataReady) {
+            // With no completed chain, an in-flight chain has no new data. If idle, the DRY latch stalled:
+            // no new pulse occurs until all sensor data is read (datasheet section 5.4.4), so re-kick it.
+            if (!spiIsBusy(&gyro->dev)) {
+                return sch16tGyroReadBlocking(gyro);
+            }
+            return false;
+        }
         return sch16tParseSample(gyro, sch16tRxActive ^ 1);
 
     default:

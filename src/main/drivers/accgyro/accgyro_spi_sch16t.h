@@ -73,6 +73,13 @@
 #define SCH16T_STAT_SUM         0x14
 #define SCH16T_STAT_SUM_SAT     0x15
 #define SCH16T_STAT_COM         0x16
+#define SCH16T_STAT_RATE_COM    0x17
+#define SCH16T_STAT_RATE_X      0x18
+#define SCH16T_STAT_RATE_Y      0x19
+#define SCH16T_STAT_RATE_Z      0x1A
+#define SCH16T_STAT_ACC_X       0x1B
+#define SCH16T_STAT_ACC_Y       0x1C
+#define SCH16T_STAT_ACC_Z       0x1D
 #define SCH16T_CTRL_FILT_RATE   0x25
 #define SCH16T_CTRL_FILT_ACC12  0x26
 #define SCH16T_CTRL_FILT_ACC3   0x27
@@ -111,6 +118,9 @@
     ((SCH16T_DYN3 << 12) | (SCH16T_DYN3 << 9) | (SCH16T_DEC2 << 6) | (SCH16T_DEC2 << 3) | SCH16T_DEC2)
 #define SCH16T_CTRL_ACC12_VAL \
     ((SCH16T_DYN1 << 12) | (SCH16T_DYN1 << 9) | (SCH16T_DEC2 << 6) | (SCH16T_DEC2 << 3) | SCH16T_DEC2)
+
+// DYN_ACC3 = 0001 is preserved while DEC_ACC3 = 0000 disables ACC3 output
+#define SCH16T_CTRL_ACC3_VAL    0x10000
 
 // CTRL_RESET / CTRL_MODE / status values
 #define SCH16T_RESET_SOFT       0xA
