@@ -166,29 +166,13 @@ STATIC_UNIT_TESTED busStatus_e sch16tFrameGapCallback(uintptr_t arg)
 void sch16tFreshnessReset(sch16tFreshness_t *state)
 {
     memset(state, 0, sizeof(*state));
-    state->health = SCH16T_HEALTHY;
 }
 
-void sch16tFreshnessMiss(sch16tFreshness_t *state, uint32_t nowUs)
-{
-    if (state->missedSamples < UINT8_MAX) {
-        state->missedSamples++;
-    }
-
-    const bool sampleExpired = state->hasSample
-        && (uint32_t)(nowUs - state->lastAcceptedAtUs) >= SCH16T_SAMPLE_TIMEOUT_US;
-    if (state->missedSamples >= SCH16T_MAX_MISSED_SAMPLES || sampleExpired) {
-        state->health = SCH16T_UNHEALTHY;
-        state->recoveryStartedAtUs = 0;
-    }
-}
-
-bool sch16tFreshnessAccept(sch16tFreshness_t *state, const uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT], uint32_t nowUs)
+bool sch16tFreshnessAccept(sch16tFreshness_t *state, const uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT])
 {
     if (state->hasSample) {
         for (unsigned index = 0; index < SCH16T_SENSOR_CHANNEL_COUNT; index++) {
             if (dcnt[index] == state->dcnt[index]) {
-                sch16tFreshnessMiss(state, nowUs);
                 return false;
             }
         }
@@ -196,24 +180,9 @@ bool sch16tFreshnessAccept(sch16tFreshness_t *state, const uint8_t dcnt[SCH16T_S
 
     memcpy(state->dcnt, dcnt, sizeof(state->dcnt));
     state->hasSample = true;
-    state->missedSamples = 0;
-    state->lastAcceptedAtUs = nowUs;
     state->acceptedGeneration++;
 
-    if (state->health == SCH16T_UNHEALTHY) {
-        state->health = SCH16T_RECOVERING;
-        state->recoveryStartedAtUs = nowUs;
-    } else if (state->health == SCH16T_RECOVERING
-        && (uint32_t)(nowUs - state->recoveryStartedAtUs) >= SCH16T_RECOVERY_TIME_US) {
-        state->health = SCH16T_HEALTHY;
-    }
-
     return true;
-}
-
-bool sch16tFreshnessIsHealthy(const sch16tFreshness_t *state)
-{
-    return state->health == SCH16T_HEALTHY;
 }
 
 bool sch16tSampleIsRecent(uint32_t nowUs, uint32_t completedAtUs)
@@ -342,14 +311,7 @@ static bool sch16tReadSensorBlocking(const extDevice_t *dev, uint16_t addr, uint
     return sch16tReadBlocking(dev, addr, value20, true);
 }
 
-static bool sch16tRecordMiss(gyroDev_t *gyro, uint32_t nowUs)
-{
-    sch16tFreshnessMiss(&sch16tFreshness, nowUs);
-    gyro->runtimeHealthy = sch16tFreshnessIsHealthy(&sch16tFreshness);
-    return false;
-}
-
-static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPLE_RESPONSE_COUNT][SCH16T_FRAME_SIZE], uint32_t nowUs)
+static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPLE_RESPONSE_COUNT][SCH16T_FRAME_SIZE])
 {
     static const uint16_t sourceAddresses[SCH16T_SAMPLE_RESPONSE_COUNT] = {
         SCH16T_RATE_X2,
@@ -365,13 +327,12 @@ static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPL
     for (unsigned index = 0; index < SCH16T_SAMPLE_RESPONSE_COUNT; index++) {
         responses[index] = sch16tFrameFromBytes(frames[index]);
         if (!sch16tSensorFrameValid(responses[index], sourceAddresses[index])) {
-            return sch16tRecordMiss(gyro, nowUs);
+            return false;
         }
         dcnt[index] = sch16tMisoDcnt(responses[index]);
     }
 
-    if (!sch16tFreshnessAccept(&sch16tFreshness, dcnt, nowUs)) {
-        gyro->runtimeHealthy = sch16tFreshnessIsHealthy(&sch16tFreshness);
+    if (!sch16tFreshnessAccept(&sch16tFreshness, dcnt)) {
         return false;
     }
 
@@ -388,7 +349,6 @@ static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPL
         sch16tAccRaw[axis] = accRaw[axis];
     }
 
-    gyro->runtimeHealthy = sch16tFreshnessIsHealthy(&sch16tFreshness);
     return true;
 }
 
@@ -468,7 +428,7 @@ static bool sch16tGyroReadBlocking(gyroDev_t *gyro)
     spiSequence(&gyro->dev, segments);
     spiWait(&gyro->dev);
 
-    return sch16tParseSample(gyro, sch16tBlockingChainRx + 1, micros());
+    return sch16tParseSample(gyro, sch16tBlockingChainRx + 1);
 }
 
 #ifdef USE_DMA
@@ -687,7 +647,7 @@ static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)
             if (!spiIsBusy(&gyro->dev)) {
                 return sch16tGyroReadBlocking(gyro);
             }
-            return sch16tRecordMiss(gyro, micros());
+            return false;
         }
         {
             uint8_t snapshot[SCH16T_SAMPLE_RESPONSE_COUNT][SCH16T_FRAME_SIZE];
@@ -704,9 +664,9 @@ static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)
 
             const uint32_t nowUs = micros();
             if (!sch16tSampleIsRecent(nowUs, completedAtUs)) {
-                return sch16tRecordMiss(gyro, nowUs);
+                return false;
             }
-            return sch16tParseSample(gyro, snapshot, nowUs);
+            return sch16tParseSample(gyro, snapshot);
         }
 
     default:

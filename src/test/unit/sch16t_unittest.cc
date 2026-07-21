@@ -231,59 +231,21 @@ TEST(sch16tFreshnessTest, AcceptsIndependentCountersAndWrap)
     const uint8_t first[SCH16T_SENSOR_CHANNEL_COUNT] = {15, 7, 3, 12, 5, 1};
     const uint8_t next[SCH16T_SENSOR_CHANNEL_COUNT] = {0, 8, 4, 13, 6, 2};
 
-    EXPECT_TRUE(sch16tFreshnessAccept(&state, first, 100));
-    EXPECT_TRUE(sch16tFreshnessIsHealthy(&state));
+    EXPECT_TRUE(sch16tFreshnessAccept(&state, first));
     EXPECT_EQ(1U, state.acceptedGeneration);
-    EXPECT_TRUE(sch16tFreshnessAccept(&state, next, 269));
+    EXPECT_TRUE(sch16tFreshnessAccept(&state, next));
     EXPECT_EQ(2U, state.acceptedGeneration);
 }
 
-TEST(sch16tFreshnessTest, RejectsFrozenChannelAndFailsAfterEightMisses)
+TEST(sch16tFreshnessTest, RejectsFrozenChannelWithoutAdvancingGeneration)
 {
     sch16tFreshness_t state;
     sch16tFreshnessReset(&state);
     const uint8_t first[SCH16T_SENSOR_CHANNEL_COUNT] = {1, 2, 3, 4, 5, 6};
     const uint8_t frozen[SCH16T_SENSOR_CHANNEL_COUNT] = {2, 3, 3, 5, 6, 7};
-    ASSERT_TRUE(sch16tFreshnessAccept(&state, first, 100));
-
-    for (unsigned miss = 1; miss < SCH16T_MAX_MISSED_SAMPLES; miss++) {
-        EXPECT_FALSE(sch16tFreshnessAccept(&state, frozen, 100 + miss));
-        EXPECT_TRUE(sch16tFreshnessIsHealthy(&state));
-    }
-    EXPECT_FALSE(sch16tFreshnessAccept(&state, frozen, 108));
-    EXPECT_FALSE(sch16tFreshnessIsHealthy(&state));
+    ASSERT_TRUE(sch16tFreshnessAccept(&state, first));
+    EXPECT_FALSE(sch16tFreshnessAccept(&state, frozen));
     EXPECT_EQ(1U, state.acceptedGeneration);
-}
-
-TEST(sch16tFreshnessTest, EnforcesAgeAndRecoveryHysteresis)
-{
-    sch16tFreshness_t state;
-    sch16tFreshnessReset(&state);
-    uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT] = {1, 2, 3, 4, 5, 6};
-    ASSERT_TRUE(sch16tFreshnessAccept(&state, dcnt, 100));
-
-    sch16tFreshnessMiss(&state, 2099);
-    EXPECT_TRUE(sch16tFreshnessIsHealthy(&state));
-    sch16tFreshnessMiss(&state, 2100);
-    EXPECT_FALSE(sch16tFreshnessIsHealthy(&state));
-
-    for (unsigned index = 0; index < SCH16T_SENSOR_CHANNEL_COUNT; index++) {
-        dcnt[index]++;
-    }
-    EXPECT_TRUE(sch16tFreshnessAccept(&state, dcnt, 3000));
-    EXPECT_FALSE(sch16tFreshnessIsHealthy(&state));
-
-    for (unsigned index = 0; index < SCH16T_SENSOR_CHANNEL_COUNT; index++) {
-        dcnt[index]++;
-    }
-    EXPECT_TRUE(sch16tFreshnessAccept(&state, dcnt, 52999));
-    EXPECT_FALSE(sch16tFreshnessIsHealthy(&state));
-
-    for (unsigned index = 0; index < SCH16T_SENSOR_CHANNEL_COUNT; index++) {
-        dcnt[index]++;
-    }
-    EXPECT_TRUE(sch16tFreshnessAccept(&state, dcnt, 53000));
-    EXPECT_TRUE(sch16tFreshnessIsHealthy(&state));
 }
 
 TEST(sch16tFreshnessTest, RejectsSamplesAtTimeoutBoundary)
