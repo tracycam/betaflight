@@ -315,6 +315,12 @@ rx_sumd_unittest_SRC := \
 		$(USER_DIR)/common/streambuf.c \
 		$(USER_DIR)/rx/sumd.c
 
+sch16t_unittest_SRC := \
+		$(USER_DIR)/drivers/accgyro/accgyro_spi_sch16t.c
+
+sch16t_unittest_DEFINES := \
+                USE_ACCGYRO_SCH16T=
+
 scheduler_unittest_SRC := \
 		$(USER_DIR)/scheduler/scheduler.c \
 		$(USER_DIR)/common/crc.c \

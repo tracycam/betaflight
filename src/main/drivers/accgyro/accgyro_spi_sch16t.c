@@ -34,61 +34,98 @@
 #include "drivers/accgyro/accgyro_spi_sch16t.h"
 
 // Pure protocol functions (no SPI dependency, host-testable)
-// TODO(T2): implement CRC8/frame logic against golden vectors
+
+#define SCH16T_CRC_DATA_MASK        0xFFFFFFFFFF00ULL
+#define SCH16T_CRC_POLYNOMIAL       0x2FU
+#define SCH16T_CRC_INITIAL          0xFFU
+#define SCH16T_CRC_MSB_MASK         0x80U
+#define SCH16T_FRAME_BIT_COUNT      48
+
+#define SCH16T_ADDRESS_MASK         0x3FFU
+#define SCH16T_MOSI_ADDRESS_SHIFT   38
+#define SCH16T_MOSI_WRITE_BIT       (1ULL << 37)
+#define SCH16T_MOSI_FRAME_TYPE_BIT  (1ULL << 35)
+
+#define SCH16T_DATA_MASK            0xFFFFFULL
+#define SCH16T_DATA_SHIFT           8
+#define SCH16T_SENSOR_SIGN_BIT      0x80000
+#define SCH16T_SENSOR_RANGE         0x100000
+
+#define SCH16T_MISO_DATA_BIT        (1ULL << 47)
+#define SCH16T_MISO_ADDRESS_SHIFT   37
+#define SCH16T_MISO_STATUS_SHIFT    33
+#define SCH16T_MISO_STATUS_MASK     0x03U
+#define SCH16T_MISO_DCNT_SHIFT      29
+#define SCH16T_MISO_DCNT_MASK       0x0FU
 
 uint8_t sch16tCrc8(uint64_t frame48)
 {
-    UNUSED(frame48);
-    return 0;
+    const uint64_t data = frame48 & SCH16T_CRC_DATA_MASK;
+    uint8_t crc = SCH16T_CRC_INITIAL;
+
+    // The sensor clocks all 48 bits after replacing the received CRC byte with zero.
+    for (int bit = SCH16T_FRAME_BIT_COUNT - 1; bit >= 0; bit--) {
+        const uint8_t dataBit = (data >> bit) & 0x01U;
+        crc = crc & SCH16T_CRC_MSB_MASK
+            ? (uint8_t)((uint8_t)(crc << 1) ^ SCH16T_CRC_POLYNOMIAL) ^ dataBit
+            : (uint8_t)(crc << 1) | dataBit;
+    }
+
+    return crc;
 }
 
 uint64_t sch16tFrameRead(uint16_t addr)
 {
-    UNUSED(addr);
-    return 0;
+    const uint64_t frame = ((uint64_t)(addr & SCH16T_ADDRESS_MASK) << SCH16T_MOSI_ADDRESS_SHIFT)
+        | SCH16T_MOSI_FRAME_TYPE_BIT;
+
+    return frame | sch16tCrc8(frame);
 }
 
 uint64_t sch16tFrameWrite(uint16_t addr, uint32_t data20)
 {
-    UNUSED(addr);
-    UNUSED(data20);
-    return 0;
+    const uint64_t frame = ((uint64_t)(addr & SCH16T_ADDRESS_MASK) << SCH16T_MOSI_ADDRESS_SHIFT)
+        | SCH16T_MOSI_WRITE_BIT
+        | SCH16T_MOSI_FRAME_TYPE_BIT
+        | ((data20 & SCH16T_DATA_MASK) << SCH16T_DATA_SHIFT);
+
+    return frame | sch16tCrc8(frame);
 }
 
 int32_t sch16tParseSensor20(uint64_t misoFrame)
 {
-    UNUSED(misoFrame);
-    return 0;
+    int32_t sensor = (int32_t)((misoFrame >> SCH16T_DATA_SHIFT) & SCH16T_DATA_MASK);
+    if (sensor & SCH16T_SENSOR_SIGN_BIT) {
+        sensor -= SCH16T_SENSOR_RANGE;
+    }
+
+    return sensor;
 }
 
 bool sch16tMisoFrameValid(uint64_t misoFrame)
 {
-    UNUSED(misoFrame);
-    return false;
+    return sch16tCrc8(misoFrame) == (uint8_t)misoFrame
+        && sch16tMisoStatus(misoFrame) == 0;
 }
 
 uint16_t sch16tMisoSa(uint64_t misoFrame)
 {
-    UNUSED(misoFrame);
-    return 0;
+    return (misoFrame >> SCH16T_MISO_ADDRESS_SHIFT) & SCH16T_ADDRESS_MASK;
 }
 
 uint8_t sch16tMisoStatus(uint64_t misoFrame)
 {
-    UNUSED(misoFrame);
-    return 0;
+    return (misoFrame >> SCH16T_MISO_STATUS_SHIFT) & SCH16T_MISO_STATUS_MASK;
 }
 
 uint8_t sch16tMisoDcnt(uint64_t misoFrame)
 {
-    UNUSED(misoFrame);
-    return 0;
+    return (misoFrame >> SCH16T_MISO_DCNT_SHIFT) & SCH16T_MISO_DCNT_MASK;
 }
 
 bool sch16tMisoD(uint64_t misoFrame)
 {
-    UNUSED(misoFrame);
-    return false;
+    return (misoFrame & SCH16T_MISO_DATA_BIT) != 0;
 }
 
 #endif // USE_ACCGYRO_SCH16T || UNIT_TEST
