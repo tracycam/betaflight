@@ -130,26 +130,369 @@ bool sch16tMisoD(uint64_t misoFrame)
 
 #endif // USE_ACCGYRO_SCH16T || UNIT_TEST
 
-#if defined(USE_ACCGYRO_SCH16T)
+#if defined(USE_ACCGYRO_SCH16T) && !defined(UNIT_TEST)
 
-// TODO(T4): runtime driver
+#include "common/utils.h"
+
+#include "drivers/io.h"
+#include "drivers/resource.h"
+#include "drivers/time.h"
+
+#define SCH16T_DETECT_SPI_CLK_HZ       1000000
+#define SCH16T_FRAME_SIZE              6
+#define SCH16T_DETECT_FRAME_COUNT      3
+#define SCH16T_BLOCKING_FRAME_COUNT    2
+#define SCH16T_SAMPLE_FRAME_COUNT      7
+#define SCH16T_SAMPLE_RESPONSE_COUNT   (SCH16T_SAMPLE_FRAME_COUNT - 1)
+#define SCH16T_RESET_PULSE_MS          2
+#define SCH16T_STARTUP_DELAY_MS        250
+#define SCH16T_TEMPERATURE_SCALE       100
+#define SCH16T_EXTI_DETECT_THRESHOLD   1000  // mirrors GYRO_EXTI_DETECT_THRESHOLD (accgyro_mpu.c, file-local there)
+
+static busSegment_t sch16tDmaSegments[SCH16T_SAMPLE_FRAME_COUNT + 1];
+STATIC_DMA_DATA_AUTO uint8_t sch16tDmaTx[SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
+STATIC_DMA_DATA_AUTO uint8_t sch16tDmaRx[SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
+
+STATIC_DMA_DATA_AUTO uint8_t sch16tWriteTx[SCH16T_FRAME_SIZE];
+STATIC_DMA_DATA_AUTO uint8_t sch16tBlockingTx[SCH16T_BLOCKING_FRAME_COUNT][SCH16T_FRAME_SIZE];
+STATIC_DMA_DATA_AUTO uint8_t sch16tBlockingRx[SCH16T_BLOCKING_FRAME_COUNT][SCH16T_FRAME_SIZE];
+STATIC_DMA_DATA_AUTO uint8_t sch16tDetectTx[SCH16T_DETECT_FRAME_COUNT][SCH16T_FRAME_SIZE];
+STATIC_DMA_DATA_AUTO uint8_t sch16tDetectRx[SCH16T_DETECT_FRAME_COUNT][SCH16T_FRAME_SIZE];
+
+static int16_t sch16tAccRaw[XYZ_AXIS_COUNT];
+
+static void sch16tFrameToBytes(uint64_t frame, uint8_t bytes[SCH16T_FRAME_SIZE])
+{
+    for (unsigned index = 0; index < SCH16T_FRAME_SIZE; index++) {
+        bytes[index] = frame >> ((SCH16T_FRAME_SIZE - index - 1) * 8);
+    }
+}
+
+static uint64_t sch16tFrameFromBytes(const uint8_t bytes[SCH16T_FRAME_SIZE])
+{
+    uint64_t frame = 0;
+
+    for (unsigned index = 0; index < SCH16T_FRAME_SIZE; index++) {
+        frame = (frame << 8) | bytes[index];
+    }
+
+    return frame;
+}
+
+static uint32_t sch16tData20(uint64_t frame)
+{
+    return (frame >> SCH16T_DATA_SHIFT) & SCH16T_DATA_MASK;
+}
+
+static void sch16tWriteRegister(const extDevice_t *dev, uint16_t addr, uint32_t data20)
+{
+    sch16tFrameToBytes(sch16tFrameWrite(addr, data20), sch16tWriteTx);
+
+    busSegment_t segments[] = {
+        {.u.buffers = {sch16tWriteTx, NULL}, SCH16T_FRAME_SIZE, true, NULL},
+        {.u.link = {NULL, NULL}, 0, true, NULL},
+    };
+
+    spiSequence(dev, segments);
+    spiWait(dev);
+}
+
+static bool sch16tReadRegisterBlocking(const extDevice_t *dev, uint16_t addr, uint32_t *value20)
+{
+    const uint64_t request = sch16tFrameRead(addr);
+
+    for (unsigned index = 0; index < SCH16T_BLOCKING_FRAME_COUNT; index++) {
+        sch16tFrameToBytes(request, sch16tBlockingTx[index]);
+    }
+
+    busSegment_t segments[] = {
+        {.u.buffers = {sch16tBlockingTx[0], sch16tBlockingRx[0]}, SCH16T_FRAME_SIZE, true, NULL},
+        {.u.buffers = {sch16tBlockingTx[1], sch16tBlockingRx[1]}, SCH16T_FRAME_SIZE, true, NULL},
+        {.u.link = {NULL, NULL}, 0, true, NULL},
+    };
+
+    spiSequence(dev, segments);
+    spiWait(dev);
+
+    const uint64_t response = sch16tFrameFromBytes(sch16tBlockingRx[1]);
+    if (!sch16tMisoFrameValid(response)) {
+        return false;
+    }
+
+    *value20 = sch16tData20(response);
+    return true;
+}
+
+static bool sch16tParseSample(gyroDev_t *gyro)
+{
+    uint64_t responses[SCH16T_SAMPLE_RESPONSE_COUNT];
+
+    for (unsigned index = 0; index < SCH16T_SAMPLE_RESPONSE_COUNT; index++) {
+        responses[index] = sch16tFrameFromBytes(sch16tDmaRx[index + 1]);
+        if (!sch16tMisoFrameValid(responses[index])) {
+            // PX4 counts CRC failures; Betaflight drops the complete sample.
+            return false;
+        }
+    }
+
+    int16_t gyroRaw[XYZ_AXIS_COUNT];
+    int16_t accRaw[XYZ_AXIS_COUNT];
+
+    for (unsigned axis = 0; axis < XYZ_AXIS_COUNT; axis++) {
+        gyroRaw[axis] = (int16_t)(sch16tParseSensor20(responses[axis]) >> 4);
+        accRaw[axis] = (int16_t)(sch16tParseSensor20(responses[axis + XYZ_AXIS_COUNT]) >> 4);
+    }
+
+    for (unsigned axis = 0; axis < XYZ_AXIS_COUNT; axis++) {
+        gyro->gyroADCRaw[axis] = gyroRaw[axis];
+        sch16tAccRaw[axis] = accRaw[axis];
+    }
+
+    return true;
+}
+
+static busStatus_e sch16tDmaCallback(uintptr_t arg)
+{
+    return mpuIntCallback(arg);
+}
+
+static void sch16tBuildDmaChain(void)
+{
+    static const uint16_t registers[SCH16T_SAMPLE_FRAME_COUNT] = {
+        SCH16T_RATE_X2,
+        SCH16T_RATE_Y2,
+        SCH16T_RATE_Z2,
+        SCH16T_ACC_X2,
+        SCH16T_ACC_Y2,
+        SCH16T_ACC_Z2,
+        SCH16T_RATE_X2,
+    };
+
+    for (unsigned index = 0; index < SCH16T_SAMPLE_FRAME_COUNT; index++) {
+        sch16tFrameToBytes(sch16tFrameRead(registers[index]), sch16tDmaTx[index]);
+        sch16tDmaSegments[index].u.buffers.txData = sch16tDmaTx[index];
+        sch16tDmaSegments[index].u.buffers.rxData = sch16tDmaRx[index];
+        sch16tDmaSegments[index].len = SCH16T_FRAME_SIZE;
+        sch16tDmaSegments[index].negateCS = true;
+        sch16tDmaSegments[index].callback = NULL;
+    }
+
+    sch16tDmaSegments[SCH16T_SAMPLE_FRAME_COUNT - 1].callback = sch16tDmaCallback;
+    sch16tDmaSegments[SCH16T_SAMPLE_FRAME_COUNT] = (busSegment_t){
+        .u.link = {NULL, NULL},
+        .len = 0,
+        .negateCS = true,
+        .callback = NULL,
+    };
+}
+
+#ifdef USE_DMA
+static void sch16tIntExtiHandler(extiCallbackRec_t *cb)
+{
+    gyroDev_t *gyro = container_of(cb, gyroDev_t, exti);
+    const uint32_t nowCycles = getCycleCounter();
+    const int32_t gyroLastPeriod = cmpTimeCycles(nowCycles, gyro->gyroLastEXTI);
+
+    if ((gyro->gyroShortPeriod == 0) || (gyroLastPeriod < gyro->gyroShortPeriod)) {
+        gyro->gyroSyncEXTI = gyro->gyroLastEXTI + gyro->gyroDmaMaxDuration;
+    }
+    gyro->gyroLastEXTI = nowCycles;
+
+    if (gyro->gyroModeSPI == GYRO_EXTI_INT_DMA) {
+        spiSequence(&gyro->dev, sch16tDmaSegments);
+    }
+
+    gyro->detectedEXTI++;
+}
+#endif
+
+static void sch16tAccInit(accDev_t *acc)
+{
+    // The shared sensor is configured by gyro init before Betaflight initializes the accelerometer.
+    acc->acc_1G = SCH16T_ACC_1G;
+}
+
+static FAST_CODE bool sch16tAccReadSPI(accDev_t *acc)
+{
+    for (unsigned axis = 0; axis < XYZ_AXIS_COUNT; axis++) {
+        acc->ADCRaw[axis] = sch16tAccRaw[axis];
+    }
+
+    return true;
+}
+
+static bool sch16tTemperatureRead(gyroDev_t *gyro, int16_t *temperature)
+{
+    uint32_t value20;
+    if (!sch16tReadRegisterBlocking(&gyro->dev, SCH16T_TEMP, &value20)) {
+        return false;
+    }
+
+    *temperature = (int16_t)(value20 >> 4) / SCH16T_TEMPERATURE_SCALE;
+    return true;
+}
+
+static void sch16tGyroInit(gyroDev_t *gyro)
+{
+    extDevice_t *dev = &gyro->dev;
+
+    spiSetClkPhasePolarity(dev, true);
+    spiSetClkDivisor(dev, spiCalculateDivider(SCH16T_MAX_SPI_CLK_HZ));
+
+#if defined(GYRO_1_RST_PIN)
+    const IO_t resetPin = IOGetByTag(IO_TAG(GYRO_1_RST_PIN));
+    IOInit(resetPin, OWNER_SYSTEM, 0);
+    IOConfigGPIO(resetPin, IOCFG_OUT_PP);
+    IOLo(resetPin);
+    delay(SCH16T_RESET_PULSE_MS);
+    IOHi(resetPin);
+#else
+    sch16tWriteRegister(dev, SCH16T_CTRL_RESET, SCH16T_RESET_SOFT);
+#endif
+    delay(SCH16T_STARTUP_DELAY_MS);
+
+    sch16tWriteRegister(dev, SCH16T_CTRL_FILT_RATE, SCH16T_FILT_LPF3_ALL);
+    sch16tWriteRegister(dev, SCH16T_CTRL_FILT_ACC12, SCH16T_FILT_LPF3_ALL);
+    sch16tWriteRegister(dev, SCH16T_CTRL_RATE, SCH16T_CTRL_RATE_VAL);
+    sch16tWriteRegister(dev, SCH16T_CTRL_ACC12, SCH16T_CTRL_ACC12_VAL);
+    sch16tWriteRegister(dev, SCH16T_CTRL_USER_IF, SCH16T_CTRL_USER_IF_VAL);
+    sch16tWriteRegister(dev, SCH16T_CTRL_MODE, SCH16T_MODE_EN_SENSOR);
+    delay(SCH16T_STARTUP_DELAY_MS);
+
+    uint32_t statSum = 0;
+    const bool statSumValid = sch16tReadRegisterBlocking(dev, SCH16T_STAT_SUM, &statSum);
+    if (!statSumValid || statSum != SCH16T_STAT_SUM_OK) {
+        // TODO(DEBUG_LEVEL): expose startup status; gyro init callbacks cannot report failure.
+        (void)0;
+    }
+
+    uint32_t status;
+    (void)sch16tReadRegisterBlocking(dev, SCH16T_STAT_SUM_SAT, &status);
+    (void)sch16tReadRegisterBlocking(dev, SCH16T_STAT_COM, &status);
+
+    sch16tWriteRegister(dev, SCH16T_CTRL_MODE, SCH16T_MODE_EOI);
+
+    gyro->scale = SCH16T_GYRO_SCALE_DPS;
+    gyro->mpuDividerDrops = 0;
+    sch16tBuildDmaChain();
+    mpuGyroInit(gyro);
+}
+
+static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)
+{
+    switch (gyro->gyroModeSPI) {
+    case GYRO_EXTI_INIT:
+        gyro->gyroDmaMaxDuration = 5;
+
+        if (gyro->detectedEXTI > SCH16T_EXTI_DETECT_THRESHOLD) {
+#ifdef USE_DMA
+            if (spiUseDMA(&gyro->dev)) {
+                gyro->dev.callbackArg = (uintptr_t)gyro;
+
+                // The common two-segment MPU chain cannot hold seven SafeSPI frames.
+                EXTIHandlerInit(&gyro->exti, sch16tIntExtiHandler);
+                gyro->gyroModeSPI = GYRO_EXTI_INT_DMA;
+            } else
+#endif
+            {
+                gyro->gyroModeSPI = GYRO_EXTI_INT;
+            }
+        } else {
+            gyro->gyroModeSPI = GYRO_EXTI_NO_INT;
+        }
+        break;
+
+    case GYRO_EXTI_INT:
+    case GYRO_EXTI_NO_INT:
+    {
+        busSegment_t segments[SCH16T_SAMPLE_FRAME_COUNT + 1];
+        memcpy(segments, sch16tDmaSegments, sizeof(segments));
+        segments[SCH16T_SAMPLE_FRAME_COUNT - 1].callback = NULL;
+        segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.dev = NULL;
+        segments[SCH16T_SAMPLE_FRAME_COUNT].u.link.segments = NULL;
+
+        spiSequence(&gyro->dev, segments);
+        spiWait(&gyro->dev);
+
+        return sch16tParseSample(gyro);
+    }
+
+    case GYRO_EXTI_INT_DMA:
+        return sch16tParseSample(gyro);
+
+    default:
+        break;
+    }
+
+    return true;
+}
 
 uint8_t sch16tSpiDetect(const extDevice_t *dev)
 {
-    UNUSED(dev);
-    return 0;
+    spiSetClkPhasePolarity(dev, true);
+    spiSetClkDivisor(dev, spiCalculateDivider(SCH16T_DETECT_SPI_CLK_HZ));
+
+    const uint16_t registers[SCH16T_DETECT_FRAME_COUNT] = {
+        SCH16T_COMP_ID,
+        SCH16T_ASIC_ID,
+        SCH16T_COMP_ID,
+    };
+
+    busSegment_t segments[SCH16T_DETECT_FRAME_COUNT + 1];
+    for (unsigned index = 0; index < SCH16T_DETECT_FRAME_COUNT; index++) {
+        sch16tFrameToBytes(sch16tFrameRead(registers[index]), sch16tDetectTx[index]);
+        segments[index] = (busSegment_t){
+            .u.buffers = {sch16tDetectTx[index], sch16tDetectRx[index]},
+            .len = SCH16T_FRAME_SIZE,
+            .negateCS = true,
+            .callback = NULL,
+        };
+    }
+    segments[SCH16T_DETECT_FRAME_COUNT] = (busSegment_t){
+        .u.link = {NULL, NULL},
+        .len = 0,
+        .negateCS = true,
+        .callback = NULL,
+    };
+
+    spiSequence(dev, segments);
+    spiWait(dev);
+
+    const uint64_t compIdFrame = sch16tFrameFromBytes(sch16tDetectRx[1]);
+    const uint64_t asicIdFrame = sch16tFrameFromBytes(sch16tDetectRx[2]);
+    if (!sch16tMisoFrameValid(compIdFrame) || !sch16tMisoFrameValid(asicIdFrame)) {
+        return MPU_NONE;
+    }
+
+    const uint32_t compId = sch16tData20(compIdFrame);
+    const uint32_t asicId = sch16tData20(asicIdFrame);
+
+    return asicId == SCH16T_ASIC_ID_K10 && compId == SCH16T_COMP_ID_K10
+        ? SCH16T_SPI
+        : MPU_NONE;
 }
 
 bool sch16tSpiAccDetect(accDev_t *acc)
 {
-    UNUSED(acc);
-    return false;
+    if (acc->mpuDetectionResult.sensor != SCH16T_SPI) {
+        return false;
+    }
+
+    acc->initFn = sch16tAccInit;
+    acc->readFn = sch16tAccReadSPI;
+    return true;
 }
 
 bool sch16tSpiGyroDetect(gyroDev_t *gyro)
 {
-    UNUSED(gyro);
-    return false;
+    if (gyro->mpuDetectionResult.sensor != SCH16T_SPI) {
+        return false;
+    }
+
+    gyro->initFn = sch16tGyroInit;
+    gyro->readFn = sch16tGyroReadSPI;
+    gyro->temperatureFn = sch16tTemperatureRead;
+    return true;
 }
 
-#endif // USE_ACCGYRO_SCH16T
+#endif // USE_ACCGYRO_SCH16T && !UNIT_TEST
