@@ -168,6 +168,7 @@ const char * const lookupTableGyroHardware[GYRO_HARDWARE_COUNT] = {
     [GYRO_IIM42652] = "IIM42652",
     [GYRO_ICM40608] = "ICM40608",
     [GYRO_LSM6DSK320X] = "LSM6DSK320X",
+    [GYRO_SCH16T] = "SCH16T",
     [GYRO_VIRTUAL] = "VIRTUAL"
 };
 
@@ -197,6 +198,7 @@ const char * const lookupTableAccHardware[ACC_HARDWARE_COUNT] = {
     [ACC_IIM42652] = "IIM42652",
     [ACC_ICM40608] = "ICM40608",
     [ACC_LSM6DSK320X] = "LSM6DSK320X",
+    [ACC_SCH16T] = "SCH16T",
     [ACC_VIRTUAL] = "VIRTUAL"
 };
 
