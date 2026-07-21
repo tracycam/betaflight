@@ -304,6 +304,7 @@ COMMON_SRC += \
             drivers/accgyro/accgyro_spi_lsm6dso.c \
             drivers/accgyro/accgyro_spi_lsm6dso_init.c \
             drivers/accgyro/accgyro_spi_lsm6dsv16x.c \
+            drivers/accgyro/accgyro_spi_sch16t.c \
             drivers/accgyro/accgyro_spi_mpu6000.c \
             drivers/accgyro/accgyro_spi_mpu6500.c \
             drivers/accgyro/accgyro_spi_mpu9250.c \
