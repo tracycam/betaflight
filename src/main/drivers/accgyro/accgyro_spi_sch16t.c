@@ -30,6 +30,7 @@
 #include "drivers/accgyro/accgyro.h"
 #include "drivers/bus.h"
 #include "drivers/system.h"
+#include "drivers/time.h"
 
 #include "drivers/accgyro/accgyro_spi_sch16t.h"
 
@@ -155,6 +156,13 @@ bool sch16tSeqlockCopy(uint8_t *dest, const uint8_t *src, unsigned len, volatile
     return *generation == generationBefore;
 }
 
+STATIC_UNIT_TESTED busStatus_e sch16tFrameGapCallback(uintptr_t arg)
+{
+    (void)arg;
+    delayMicroseconds(SCH16T_FRAME_GAP_US);
+    return BUS_READY;
+}
+
 #endif // USE_ACCGYRO_SCH16T || UNIT_TEST
 
 #if defined(USE_ACCGYRO_SCH16T) && !defined(UNIT_TEST)
@@ -163,8 +171,6 @@ bool sch16tSeqlockCopy(uint8_t *dest, const uint8_t *src, unsigned len, volatile
 
 #include "drivers/io.h"
 #include "drivers/resource.h"
-#include "drivers/time.h"
-
 #define SCH16T_DETECT_SPI_CLK_HZ       1000000
 #define SCH16T_FRAME_SIZE              6
 #define SCH16T_DETECT_FRAME_COUNT      3
@@ -227,7 +233,7 @@ static void sch16tWriteRegister(const extDevice_t *dev, uint16_t addr, uint32_t 
     sch16tFrameToBytes(sch16tFrameWrite(addr, data20), sch16tWriteTx);
 
     busSegment_t segments[] = {
-        {.u.buffers = {sch16tWriteTx, NULL}, SCH16T_FRAME_SIZE, true, NULL},
+        {.u.buffers = {sch16tWriteTx, NULL}, SCH16T_FRAME_SIZE, true, sch16tFrameGapCallback},
         {.u.link = {NULL, NULL}, 0, true, NULL},
     };
 
@@ -244,8 +250,8 @@ static bool sch16tReadBlocking(const extDevice_t *dev, uint16_t addr, uint32_t *
     }
 
     busSegment_t segments[] = {
-        {.u.buffers = {sch16tBlockingTx[0], sch16tBlockingRx[0]}, SCH16T_FRAME_SIZE, true, NULL},
-        {.u.buffers = {sch16tBlockingTx[1], sch16tBlockingRx[1]}, SCH16T_FRAME_SIZE, true, NULL},
+        {.u.buffers = {sch16tBlockingTx[0], sch16tBlockingRx[0]}, SCH16T_FRAME_SIZE, true, sch16tFrameGapCallback},
+        {.u.buffers = {sch16tBlockingTx[1], sch16tBlockingRx[1]}, SCH16T_FRAME_SIZE, true, sch16tFrameGapCallback},
         {.u.link = {NULL, NULL}, 0, true, NULL},
     };
 
@@ -314,6 +320,7 @@ static bool sch16tParseSample(gyroDev_t *gyro, const uint8_t frames[SCH16T_SAMPL
 
 static busStatus_e sch16tDmaCallback(uintptr_t arg)
 {
+    sch16tFrameGapCallback(arg);
     // Publish the completed set: flip parity and bump the generation before dataReady is set.
     sch16tRxActive ^= 1;
     sch16tRxGeneration++;
@@ -342,7 +349,7 @@ static void sch16tBuildDmaChain(void)
             sch16tDmaSegments[bufferIndex][index].u.buffers.rxData = sch16tDmaRx[bufferIndex][index];
             sch16tDmaSegments[bufferIndex][index].len = SCH16T_FRAME_SIZE;
             sch16tDmaSegments[bufferIndex][index].negateCS = true;
-            sch16tDmaSegments[bufferIndex][index].callback = NULL;
+            sch16tDmaSegments[bufferIndex][index].callback = sch16tFrameGapCallback;
         }
     }
 
@@ -361,7 +368,7 @@ static void sch16tBuildDmaChain(void)
         sch16tBlockingSegments[index].u.buffers.rxData = sch16tBlockingChainRx[index];
         sch16tBlockingSegments[index].len = SCH16T_FRAME_SIZE;
         sch16tBlockingSegments[index].negateCS = true;
-        sch16tBlockingSegments[index].callback = NULL;
+        sch16tBlockingSegments[index].callback = sch16tFrameGapCallback;
     }
     sch16tBlockingSegments[SCH16T_SAMPLE_FRAME_COUNT] = (busSegment_t){
         .u.link = {NULL, NULL},
@@ -636,7 +643,7 @@ uint8_t sch16tSpiDetect(const extDevice_t *dev)
             .u.buffers = {sch16tDetectTx[index], sch16tDetectRx[index]},
             .len = SCH16T_FRAME_SIZE,
             .negateCS = true,
-            .callback = NULL,
+            .callback = sch16tFrameGapCallback,
         };
     }
     segments[SCH16T_DETECT_FRAME_COUNT] = (busSegment_t){

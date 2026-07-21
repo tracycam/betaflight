@@ -28,10 +28,19 @@ extern "C" {
 
 #include "drivers/accgyro/accgyro_spi_sch16t.h"
 
+busStatus_e sch16tFrameGapCallback(uintptr_t arg);
+
 }
 
 #include "unittest_macros.h"
 #include "gtest/gtest.h"
+
+static uint32_t delayedMicroseconds;
+
+extern "C" void delayMicroseconds(uint32_t us)
+{
+    delayedMicroseconds += us;
+}
 
 // Golden vectors below are from the Murata SCH16T-K10 datasheet.
 // CRC8: poly 0x2F, init 0xFF, bit-serial MSB-first over frame bits 47..0
@@ -223,6 +232,15 @@ TEST(sch16tConfigValueTest, FilterAndUserIfValues)
 TEST(sch16tStartupTest, UsesDatasheetRetryBudget)
 {
     EXPECT_EQ(5, SCH16T_INIT_ATTEMPTS);
+}
+
+TEST(sch16tSafeSpiTimingTest, EnforcesInterFrameGap)
+{
+    delayedMicroseconds = 0;
+
+    EXPECT_EQ(BUS_READY, sch16tFrameGapCallback(0));
+    EXPECT_EQ(SCH16T_FRAME_GAP_US, delayedMicroseconds);
+    EXPECT_GE(delayedMicroseconds, 1U);
 }
 
 TEST(sch16tRegisterMapTest, AddressSanity)

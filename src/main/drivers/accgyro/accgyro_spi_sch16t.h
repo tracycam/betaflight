@@ -129,6 +129,7 @@
 
 // 10.5 MHz max SPI frequency (MISO_HI_SPD = 0 default limit)
 #define SCH16T_MAX_SPI_CLK_HZ   10500000
+#define SCH16T_FRAME_GAP_US     1
 
 // Sensitivity
 // DYN3 gyro range: 200 LSB/(dps) at 20-bit resolution; after >>4 -> 12.5 LSB/(dps)
