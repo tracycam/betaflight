@@ -61,6 +61,26 @@ TEST(AtomicUnittest, TestAtomicBlockNB)
     EXPECT_EQ(atomic_BASEPRI, 0);          // restore priority to unlocked
 }
 
+TEST(AtomicUnittest, TestAtomicBlockAll)
+{
+    atomic_PRIMASK = 0;
+
+    ATOMIC_BLOCK_ALL() {
+        EXPECT_EQ(atomic_PRIMASK, 1);
+        ATOMIC_BLOCK_ALL() {
+            EXPECT_EQ(atomic_PRIMASK, 1);
+        }
+        EXPECT_EQ(atomic_PRIMASK, 1);
+    }
+    EXPECT_EQ(atomic_PRIMASK, 0);
+
+    atomic_PRIMASK = 1;
+    ATOMIC_BLOCK_ALL() {
+        EXPECT_EQ(atomic_PRIMASK, 1);
+    }
+    EXPECT_EQ(atomic_PRIMASK, 1);
+}
+
 struct barrierTrace {
     int enter, leave;
 };
