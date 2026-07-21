@@ -163,12 +163,20 @@ STATIC_UNIT_TESTED busStatus_e sch16tFrameGapCallback(uintptr_t arg)
     return BUS_READY;
 }
 
-void sch16tFreshnessReset(sch16tFreshness_t *state)
+#ifndef UNIT_TEST
+typedef struct {
+    uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT];
+    bool hasSample;
+    uint32_t acceptedGeneration;
+} sch16tFreshness_t;
+#endif
+
+STATIC_UNIT_TESTED void sch16tFreshnessReset(sch16tFreshness_t *state)
 {
     memset(state, 0, sizeof(*state));
 }
 
-bool sch16tFreshnessAccept(sch16tFreshness_t *state, const uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT])
+STATIC_UNIT_TESTED bool sch16tFreshnessAccept(sch16tFreshness_t *state, const uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT])
 {
     if (state->hasSample) {
         for (unsigned index = 0; index < SCH16T_SENSOR_CHANNEL_COUNT; index++) {
@@ -185,7 +193,7 @@ bool sch16tFreshnessAccept(sch16tFreshness_t *state, const uint8_t dcnt[SCH16T_S
     return true;
 }
 
-bool sch16tSampleIsRecent(uint32_t nowUs, uint32_t completedAtUs)
+STATIC_UNIT_TESTED bool sch16tSampleIsRecent(uint32_t nowUs, uint32_t completedAtUs)
 {
     return (uint32_t)(nowUs - completedAtUs) < SCH16T_SAMPLE_TIMEOUT_US;
 }
@@ -232,7 +240,6 @@ STATIC_DMA_DATA_AUTO uint8_t sch16tDetectRx[SCH16T_DETECT_FRAME_COUNT][SCH16T_FR
 // Dedicated blocking-chain buffers and descriptors; never referenced by the DMA chains.
 STATIC_DMA_DATA_AUTO uint8_t sch16tBlockingChainRx[SCH16T_SAMPLE_FRAME_COUNT][SCH16T_FRAME_SIZE];
 static busSegment_t sch16tBlockingSegments[SCH16T_SAMPLE_FRAME_COUNT + 1];
-STATIC_DMA_DATA_AUTO uint8_t sch16tDetectRx[SCH16T_DETECT_FRAME_COUNT][SCH16T_FRAME_SIZE];
 
 static int16_t sch16tAccRaw[XYZ_AXIS_COUNT];
 

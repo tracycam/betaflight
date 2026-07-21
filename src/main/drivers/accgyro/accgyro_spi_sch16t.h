@@ -140,11 +140,13 @@
 #define SCH16T_SENSOR_CHANNEL_COUNT  6
 #define SCH16T_SAMPLE_TIMEOUT_US      2000
 
+#ifdef UNIT_TEST
 typedef struct {
     uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT];
     bool hasSample;
     uint32_t acceptedGeneration;
 } sch16tFreshness_t;
+#endif
 
 // Pure protocol functions (host-testable, no SPI types in signatures)
 
@@ -170,9 +172,11 @@ bool sch16tSensorFrameValid(uint64_t misoFrame, uint16_t sourceAddress);
 // Copy a sample snapshot; false when the completion ISR bumped the generation during the copy
 bool sch16tSeqlockCopy(uint8_t *dest, const uint8_t *src, unsigned len, volatile uint32_t *generation, uint32_t generationBefore);
 
+#ifdef UNIT_TEST
 void sch16tFreshnessReset(sch16tFreshness_t *state);
 bool sch16tFreshnessAccept(sch16tFreshness_t *state, const uint8_t dcnt[SCH16T_SENSOR_CHANNEL_COUNT]);
 bool sch16tSampleIsRecent(uint32_t nowUs, uint32_t completedAtUs);
+#endif
 
 // MISO field helpers
 uint16_t sch16tMisoSa(uint64_t misoFrame);
