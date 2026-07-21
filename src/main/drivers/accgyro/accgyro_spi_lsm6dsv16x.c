@@ -109,7 +109,7 @@
 #define LSM6DSV_FIFO_CTRL3_BDR_GY_1920HZ                0x0a
 #define LSM6DSV_FIFO_CTRL3_BDR_GY_3840HZ                0x0b
 #define LSM6DSV_FIFO_CTRL3_BDR_GY_7680HZ                0x0c
-#define LSM6DSV_FIFO_CTRL3_BDR_XL_MASK                  0xff
+#define LSM6DSV_FIFO_CTRL3_BDR_XL_MASK                  0x0f
 #define LSM6DSV_FIFO_CTRL3_BDR_XL_SHIFT                 0
 #define LSM6DSV_FIFO_CTRL3_BDR_XL_1875HZ                0x01
 #define LSM6DSV_FIFO_CTRL3_BDR_XL_7_5HZ                 0x02
@@ -310,10 +310,16 @@
 #define LSM6DSV_CTRL5                       0x14
 #define LSM6DSV_CTRL5_BUS_ACT_SEL_MASK                  0x06
 #define LSM6DSV_CTRL5_BUS_ACT_SEL_SHIFT                 1
-#define LSM6DSV_CTRL5_BUS_ACT_SEL_2US                   0
-#define LSM6DSV_CTRL5_BUS_ACT_SEL_50US                  1
-#define LSM6DSV_CTRL5_BUS_ACT_SEL_1US                   2
-#define LSM6DSV_CTRL5_BUS_ACT_SEL_25US                  3
+// BUS_ACT_SEL encoding differs between DSV16X and DSK320X:
+//   DSV16X:  00=2us, 01=50us, 10=1us, 11=25us
+//   DSK320X: 00=50us, 01=2us, 10=1ms, 11=50ms
+#define LSM6DSV_CTRL5_BUS_ACT_SEL_2US_DSV16X            0
+#define LSM6DSV_CTRL5_BUS_ACT_SEL_50US_DSV16X           1
+#define LSM6DSV_CTRL5_BUS_ACT_SEL_50US_DSK320X          0
+#define LSM6DSV_CTRL5_BUS_ACT_SEL_2US_DSK320X           1
+#define LSM6DSV_CTRL5_BUS_ACT_SEL_1MS                   2
+#define LSM6DSV_CTRL5_BUS_ACT_SEL_25MS_DSV16X           3
+#define LSM6DSV_CTRL5_BUS_ACT_SEL_50MS_DSK320X          3
 #define LSM6DSV_CTRL5_INT_EN_I3C                        0x01
 
 // Control register 6 (R/W)
@@ -349,7 +355,11 @@
 #define LSM6DSV_CTRL6_FS_G_500DPS                       0x02
 #define LSM6DSV_CTRL6_FS_G_1000DPS                      0x03
 #define LSM6DSV_CTRL6_FS_G_2000DPS                      0x04
-#define LSM6DSV_CTRL6_FS_G_4000DPS                      0xc0
+// FS_G field is bits[3:0]; encoding of +-4000 dps differs between the two chips:
+//   DSV16X:  0x0c
+//   DSK320X: 0x0d
+#define LSM6DSV_CTRL6_FS_G_4000DPS_DSV16X               0x0c
+#define LSM6DSV_CTRL6_FS_G_4000DPS_DSK320X              0x0d
 
 // Control register 7 (R/W)
 #define LSM6DSV_CTRL7                       0x16
@@ -848,8 +858,9 @@
 #define LSM6DSV_FIFO_DATA_OUT_TAG_SENSOR_FIFO_MLC_FEATURE           0x1c
 #define LSM6DSV_FIFO_DATA_OUT_TAG_SENSOR_FIFO_ACC_DUALC             0x1d
 #define LSM6DSV_FIFO_DATA_OUT_TAG_SENSOR_FIFO_ENHANCED_EIS_GYRO     0x1e
-#define LSM6DSV_FIFO_DATA_OUT_TAG_CNT_MASK                  0x07
-#define LSM6DSV_FIFO_DATA_OUT_TAG_CNT_SHIFT                 0
+// FIFO DATA OUT TAG layout: bits[7:3]=TAG_SENSOR[4:0], bits[2:1]=TAG_CNT[1:0], bit[0]=reserved.
+#define LSM6DSV_FIFO_DATA_OUT_TAG_CNT_MASK                  0x06
+#define LSM6DSV_FIFO_DATA_OUT_TAG_CNT_SHIFT                 1
 
 // FIFO data output X (R)
 #define LSM6DSV_FIFO_DATA_OUT_X_L           0x79
