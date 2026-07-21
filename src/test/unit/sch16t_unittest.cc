@@ -220,6 +220,11 @@ TEST(sch16tConfigValueTest, FilterAndUserIfValues)
     EXPECT_EQ(0x202C, SCH16T_CTRL_USER_IF_VAL);
 }
 
+TEST(sch16tStartupTest, UsesDatasheetRetryBudget)
+{
+    EXPECT_EQ(5, SCH16T_INIT_ATTEMPTS);
+}
+
 TEST(sch16tRegisterMapTest, AddressSanity)
 {
     EXPECT_EQ(0x0A, SCH16T_RATE_X2);

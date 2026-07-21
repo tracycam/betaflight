@@ -174,7 +174,6 @@ bool sch16tSeqlockCopy(uint8_t *dest, const uint8_t *src, unsigned len, volatile
 #define SCH16T_DMA_BUFFER_COUNT        2
 #define SCH16T_STATUS_REGISTER_COUNT   10
 #define SCH16T_CONFIG_REGISTER_COUNT   5
-#define SCH16T_INIT_ATTEMPTS           2
 #define SCH16T_RESET_PULSE_MS          2
 #define SCH16T_STARTUP_DELAY_MS        250
 #define SCH16T_EOI_DELAY_MS            5
@@ -537,18 +536,25 @@ static void sch16tGyroInit(gyroDev_t *gyro)
     spiSetClkPhasePolarity(dev, true);
     spiSetClkDivisor(dev, spiCalculateDivider(SCH16T_MAX_SPI_CLK_HZ));
 
+    bool initialized = false;
     for (unsigned attempt = 0; attempt < SCH16T_INIT_ATTEMPTS; attempt++) {
         if (sch16tInitOnce(gyro)) {
+            initialized = true;
             break;
         }
     }
-    // gyro init callbacks have no failure channel; after two failed attempts runtime S=01 frames drop samples.
+    if (!initialized) {
+        failureMode(FAILURE_GYRO_INIT_FAILED);
+        return;
+    }
 
     gyro->scale = SCH16T_GYRO_SCALE_DPS;
     gyro->mpuDividerDrops = 0;
     sch16tBuildDmaChain();
     mpuGyroInit(gyro);
-    (void)sch16tGyroReadBlocking(gyro);
+    if (!sch16tGyroReadBlocking(gyro)) {
+        failureMode(FAILURE_GYRO_INIT_FAILED);
+    }
 }
 
 static FAST_CODE bool sch16tGyroReadSPI(gyroDev_t *gyro)

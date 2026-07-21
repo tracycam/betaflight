@@ -125,6 +125,7 @@
 #define SCH16T_MODE_EN_SENSOR   0x1
 #define SCH16T_MODE_EOI         0x3
 #define SCH16T_STAT_SUM_OK      0xFFFF
+#define SCH16T_INIT_ATTEMPTS    5
 
 // 10.5 MHz max SPI frequency (MISO_HI_SPD = 0 default limit)
 #define SCH16T_MAX_SPI_CLK_HZ   10500000
