@@ -156,25 +156,26 @@ ARCH_FLAGS      = -mthumb -mcpu=cortex-m4 -march=armv7e-m -mfloat-abi=hard -mfpu
 
 ifeq ($(TARGET_MCU),STM32F411xE)
 DEVICE_FLAGS    += -DSTM32F411xE -finline-limit=20
-LD_SCRIPT       = $(LINKER_DIR)/stm32_flash_f411.ld
+DEFAULT_LD_SCRIPT = $(LINKER_DIR)/stm32_flash_f411.ld
 STARTUP_SRC     = STM32/startup/startup_stm32f411xe.s
 MCU_FLASH_SIZE  := 512
 
 else ifeq ($(TARGET_MCU),STM32F405xx)
 DEVICE_FLAGS    += -DSTM32F40_41xxx -DSTM32F405xx
-LD_SCRIPT       = $(LINKER_DIR)/stm32_flash_f405.ld
+DEFAULT_LD_SCRIPT = $(LINKER_DIR)/stm32_flash_f405.ld
 STARTUP_SRC     = STM32/startup/startup_stm32f40xx.s
 MCU_FLASH_SIZE  := 1024
 
 else ifeq ($(TARGET_MCU),STM32F446xx)
 DEVICE_FLAGS    += -DSTM32F446xx
-LD_SCRIPT       = $(LINKER_DIR)/stm32_flash_f446.ld
+DEFAULT_LD_SCRIPT = $(LINKER_DIR)/stm32_flash_f446.ld
 STARTUP_SRC     = STM32/startup/startup_stm32f446xx.s
 MCU_FLASH_SIZE  := 512
 
 else
 $(error Unknown MCU for F4 target)
 endif
+LD_SCRIPT ?= $(DEFAULT_LD_SCRIPT)
 DEVICE_FLAGS    += -DHSE_VALUE=$(HSE_VALUE)
 
 MCU_COMMON_SRC = \

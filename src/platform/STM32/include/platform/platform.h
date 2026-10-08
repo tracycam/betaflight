@@ -763,7 +763,13 @@ extern uint8_t _dmaram_end__;
 #endif
 #endif
 
-#ifdef USE_ITCM_RAM
+#if defined(USE_CCM_CODE)
+// CCM-as-fast-code path: section is copied from FLASH to CCM at boot
+// by initialiseMemorySections() in system.c. Currently only MH2425-style
+// STM32F405 clones use this (MH2425_COMPAT_PATCH_CCM_CODE in target config.h).
+#define FAST_CODE                   __attribute__((section(".ccm_code")))
+#define FAST_CODE_NOINLINE          __attribute__((section(".ccm_code"))) NOINLINE
+#elif defined(USE_ITCM_RAM)
 #if defined(ITCM_RAM_OPTIMISATION) && !defined(DEBUG)
 #define FAST_CODE                   __attribute__((section(".tcm_code"))) __attribute__((optimize(ITCM_RAM_OPTIMISATION)))
 #else
@@ -775,7 +781,7 @@ extern uint8_t _dmaram_end__;
 // header file), and functions decorated with FAST_CODE_PREF *will* go into ITCM RAM.
 
 #define FAST_CODE_NOINLINE          NOINLINE
-#endif // USE_ITCM_RAM
+#endif
 
 // noting this is not used anywhere in the codebase at the moment
 #ifdef USE_CCM_CODE

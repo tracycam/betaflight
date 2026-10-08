@@ -172,6 +172,19 @@ SECTIONS
     __fastram_bss_end__ = .;
   } >FASTRAM
 
+  /* Critical program code copied to CCM RAM at startup (see system.c initialiseMemorySections).
+   * Gated by USE_CCM_CODE - empty section is harmless for targets that do not define it. */
+  ccm_code = LOADADDR(.ccm_code);
+
+  .ccm_code :
+  {
+    . = ALIGN(4);
+    ccm_code_start = .;
+    *(.ccm_code)
+    *(.ccm_code*)
+    . = ALIGN(4);
+    ccm_code_end = .;
+  } >CCM AT> FLASH1
   .persistent_data (NOLOAD) :
   {
     __persistent_data_start__ = .;

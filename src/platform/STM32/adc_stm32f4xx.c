@@ -34,6 +34,9 @@
 #include "drivers/io_impl.h"
 #include "platform/rcc.h"
 #include "drivers/dma.h"
+#ifdef MH2425_COMPAT_PATCH_ADC_INT
+#include "drivers/nvic.h"
+#endif
 #include "drivers/sensor.h"
 #include "drivers/adc.h"
 #include "platform/adc_impl.h"
@@ -126,6 +129,13 @@ const adcTagMap_t adcTagMap[] = {
 #define VREFINT_CAL_ADDR  0x1FFF7A2A
 #define TS_CAL1_ADDR      0x1FFF7A2C
 #define TS_CAL2_ADDR      0x1FFF7A2E
+
+#ifdef MH2425_COMPAT_PATCH_ADC_INT
+#define NVIC_PRIO_ADC NVIC_BUILD_PRIORITY(0, 0)
+
+static uint8_t adcIntChannelIndex[ADCDEV_COUNT];
+static uint8_t adcIntChannelCount[ADCDEV_COUNT];
+#endif
 
 static void adcInitDevice(ADC_TypeDef *adcdev, int channelCount)
 {
@@ -299,6 +309,25 @@ void adcInit(const adcConfig_t *config)
         }
         ADC_RegularChannelConfig(adc.ADCx, adcOperatingConfig[i].adcChannel, rank++, adcOperatingConfig[i].sampleTime);
     }
+#ifdef MH2425_COMPAT_PATCH_ADC_INT
+    // Set EOC to fire for each conversion (not just end of sequence)
+    adc.ADCx->CR2 |= ADC_CR2_EOCS;
+
+    ADC_ITConfig(adc.ADCx, ADC_IT_EOC, ENABLE);
+    ADC_ITConfig(adc.ADCx, ADC_IT_OVR, ENABLE);
+    ADC_Cmd(adc.ADCx, ENABLE);
+
+    adcIntChannelCount[device] = configuredAdcChannels;
+    adcIntChannelIndex[device] = 0;
+
+    NVIC_InitTypeDef NVIC_InitStructure;
+    NVIC_InitStructure.NVIC_IRQChannel = ADC_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = NVIC_PRIORITY_BASE(NVIC_PRIO_ADC);
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = NVIC_PRIORITY_SUB(NVIC_PRIO_ADC);
+    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+#endif
+#ifndef MH2425_COMPAT_PATCH_ADC_INT
     ADC_DMARequestAfterLastTransferCmd(adc.ADCx, ENABLE);
 
     ADC_DMACmd(adc.ADCx, ENABLE);
@@ -352,6 +381,7 @@ void adcInit(const adcConfig_t *config)
     xDMA_Init(adc.dmaResource, &DMA_InitStructure);
     xDMA_Cmd(adc.dmaResource, ENABLE);
 #endif
+#endif // !MH2425_COMPAT_PATCH_ADC_INT
 
     ADC_SoftwareStartConv(adc.ADCx);
 }
@@ -360,4 +390,63 @@ void adcGetChannelValues(void)
 {
     // Nothing to do
 }
+
+#ifdef MH2425_COMPAT_PATCH_ADC_INT
+
+void ADC_RestartConv(ADC_TypeDef *adcdev)
+{
+    ADC_Cmd(adcdev, DISABLE);
+    if (adcdev == ADC1) {
+        adcIntChannelIndex[ADCDEV_1] = 0;
+    } else if (adcdev == ADC2) {
+        adcIntChannelIndex[ADCDEV_2] = 0;
+    } else if (adcdev == ADC3) {
+        adcIntChannelIndex[ADCDEV_3] = 0;
+    }
+    adcdev->CR2 &= ~ADC_CR2_CONT;
+    adcdev->CR1 &= ~ADC_CR1_SCAN;
+    ADC_ClearITPendingBit(adcdev, ADC_IT_OVR);
+    ADC_ClearITPendingBit(adcdev, ADC_IT_EOC);
+    adcdev->CR1 |= ADC_CR1_SCAN;
+    adcdev->CR2 |= ADC_CR2_CONT;
+    ADC_Cmd(adcdev, ENABLE);
+    ADC_SoftwareStartConv(adcdev);
+}
+
+void ADC_IRQHandler(void)
+{
+    if (ADC_GetITStatus(ADC1, ADC_IT_OVR)) {
+        ADC_RestartConv(ADC1);
+    } else if (ADC_GetITStatus(ADC1, ADC_IT_EOC)) {
+        ADC_ClearITPendingBit(ADC1, ADC_IT_EOC);
+        adcValues[adcIntChannelIndex[ADCDEV_1]] = ADC_GetConversionValue(ADC1);
+        adcIntChannelIndex[ADCDEV_1]++;
+        if (adcIntChannelIndex[ADCDEV_1] >= adcIntChannelCount[ADCDEV_1]) {
+            adcIntChannelIndex[ADCDEV_1] = 0;
+        }
+    }
+#if !defined(STM32F411xE)
+    if (ADC_GetITStatus(ADC2, ADC_IT_OVR)) {
+        ADC_RestartConv(ADC2);
+    } else if (ADC_GetITStatus(ADC2, ADC_IT_EOC)) {
+        ADC_ClearITPendingBit(ADC2, ADC_IT_EOC);
+        adcValues[adcIntChannelIndex[ADCDEV_2]] = ADC_GetConversionValue(ADC2);
+        adcIntChannelIndex[ADCDEV_2]++;
+        if (adcIntChannelIndex[ADCDEV_2] >= adcIntChannelCount[ADCDEV_2]) {
+            adcIntChannelIndex[ADCDEV_2] = 0;
+        }
+    }
+    if (ADC_GetITStatus(ADC3, ADC_IT_OVR)) {
+        ADC_RestartConv(ADC3);
+    } else if (ADC_GetITStatus(ADC3, ADC_IT_EOC)) {
+        ADC_ClearITPendingBit(ADC3, ADC_IT_EOC);
+        adcValues[adcIntChannelIndex[ADCDEV_3]] = ADC_GetConversionValue(ADC3);
+        adcIntChannelIndex[ADCDEV_3]++;
+        if (adcIntChannelIndex[ADCDEV_3] >= adcIntChannelCount[ADCDEV_3]) {
+            adcIntChannelIndex[ADCDEV_3] = 0;
+        }
+    }
+#endif
+}
+#endif // MH2425_COMPAT_PATCH_ADC_INT
 #endif

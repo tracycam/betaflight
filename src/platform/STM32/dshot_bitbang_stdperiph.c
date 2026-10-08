@@ -209,21 +209,33 @@ void bbDMAPreconfigure(bbPort_t *bbPort, uint8_t direction)
 
     dmainit->DMA_Mode = DMA_Mode_Normal;
     dmainit->DMA_Channel = bbPort->dmaChannel;
+#ifdef MH2425_COMPAT_PATCH_DSHOT_DMA
+    dmainit->DMA_PeripheralInc = DMA_PeripheralInc_Enable;
+    dmainit->DMA_MemoryInc = DMA_MemoryInc_Disable;
+    dmainit->DMA_FIFOMode = DMA_FIFOMode_Disable;
+#else
     dmainit->DMA_PeripheralInc = DMA_PeripheralInc_Disable;
     dmainit->DMA_MemoryInc = DMA_MemoryInc_Enable;
     dmainit->DMA_FIFOMode = DMA_FIFOMode_Enable ;
+#endif
     dmainit->DMA_FIFOThreshold = DMA_FIFOThreshold_1QuarterFull ;
     dmainit->DMA_MemoryBurst = DMA_MemoryBurst_Single ;
     dmainit->DMA_PeripheralBurst = DMA_PeripheralBurst_Single;
 
     if (direction == DSHOT_BITBANG_DIRECTION_OUTPUT) {
         dmainit->DMA_Priority = DMA_Priority_High;
-        dmainit->DMA_DIR = DMA_DIR_MemoryToPeripheral;
         dmainit->DMA_BufferSize = bbPort->portOutputCount;
-        dmainit->DMA_PeripheralBaseAddr = (uint32_t)&bbPort->gpio->BSRRL;
         dmainit->DMA_PeripheralDataSize = DMA_PeripheralDataSize_Word;
-        dmainit->DMA_Memory0BaseAddr = (uint32_t)bbPort->portOutputBuffer;
         dmainit->DMA_MemoryDataSize = DMA_MemoryDataSize_Word;
+#ifdef MH2425_COMPAT_PATCH_DSHOT_DMA
+        dmainit->DMA_DIR = DMA_DIR_PeripheralToMemory;
+        dmainit->DMA_PeripheralBaseAddr = (uint32_t)bbPort->portOutputBuffer;
+        dmainit->DMA_Memory0BaseAddr = (uint32_t)&bbPort->gpio->BSRRL;
+#else
+        dmainit->DMA_DIR = DMA_DIR_MemoryToPeripheral;
+        dmainit->DMA_PeripheralBaseAddr = (uint32_t)&bbPort->gpio->BSRRL;
+        dmainit->DMA_Memory0BaseAddr = (uint32_t)bbPort->portOutputBuffer;
+#endif
 
 #ifdef USE_DMA_REGISTER_CACHE
         xDMA_Init(bbPort->dmaResource, dmainit);
@@ -231,14 +243,20 @@ void bbDMAPreconfigure(bbPort_t *bbPort, uint8_t direction)
 #endif
     } else {
         dmainit->DMA_Priority = DMA_Priority_VeryHigh;
-        dmainit->DMA_DIR = DMA_DIR_PeripheralToMemory;
         dmainit->DMA_BufferSize = bbPort->portInputCount;
-
+    #ifdef MH2425_COMPAT_PATCH_DSHOT_DMA
+        dmainit->DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;   // Direct Mode: PSIZE=MSIZE=HalfWord
+        dmainit->DMA_DIR = DMA_DIR_MemoryToPeripheral;
+        dmainit->DMA_PeripheralBaseAddr = (uint32_t)bbPort->portInputBuffer;
+        dmainit->DMA_Memory0BaseAddr = (uint32_t)&bbPort->gpio->IDR;
+        dmainit->DMA_MemoryDataSize = DMA_MemoryDataSize_HalfWord;               // IDR low 16 bits = pin data
+#else
+        dmainit->DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord; // original: IDR conceptually 16-bit
+        dmainit->DMA_DIR = DMA_DIR_PeripheralToMemory;
         dmainit->DMA_PeripheralBaseAddr = (uint32_t)&bbPort->gpio->IDR;
-
-        dmainit->DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;
         dmainit->DMA_Memory0BaseAddr = (uint32_t)bbPort->portInputBuffer;
         dmainit->DMA_MemoryDataSize = DMA_MemoryDataSize_Word;
+#endif
 
 #ifdef USE_DMA_REGISTER_CACHE
         xDMA_Init(bbPort->dmaResource, dmainit);

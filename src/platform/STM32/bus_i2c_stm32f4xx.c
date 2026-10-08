@@ -421,9 +421,9 @@ void i2c_ev_handler(i2cDevice_e device)
         }
         else {
             ev_state->index++;
-            I2Cx->DR = state->reg;                                             // send the subaddress
             if (state->reading || !(state->bytes))                                      // if receiving or sending 0 bytes, flush now
                 I2C_ITConfig(I2Cx, I2C_IT_BUF, DISABLE);                // disable TXE to allow the buffer to flush
+            I2Cx->DR = state->reg;                                             // send the subaddress
         }
     }
     if (ev_state->index == state->bytes + 1) {                                           // we have completed the current job
