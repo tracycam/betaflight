@@ -434,6 +434,13 @@ sitl_gyro_unittest_SRC := \
 sitl_gyro_unittest_INCLUDE_DIRS := \
 		$(ROOT)/src/platform/SIMULATOR
 
+spec_unittest_SRC := \
+		$(USER_DIR)/common/spec.c
+
+spec_unittest_DEFINES := \
+		USE_KAACK_SPEC= \
+		USE_RPM_LIMIT=
+
 telemetry_crsf_unittest_SRC := \
 		$(USER_DIR)/rx/crsf.c \
 		$(USER_DIR)/telemetry/crsf.c \

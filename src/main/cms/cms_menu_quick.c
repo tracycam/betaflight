@@ -32,6 +32,9 @@
 #include "cms/cms_menu_main.h"
 #include "cms/cms_menu_vtx_common.h"
 #include "cms/cms_menu_rpm_limit.h"
+#ifdef USE_KAACK_SPEC
+#include "cms/cms_menu_spec.h"
+#endif
 #include "common/printf.h"
 #include "config/config.h"
 
@@ -95,6 +98,9 @@ static const OSD_Entry menuMainEntries[] =
 
 #if defined(USE_RPM_LIMIT)
     { "RPM LIM", OME_Submenu, cmsMenuChange, &cmsx_menuRpmLimit },
+#endif
+#ifdef USE_KAACK_SPEC
+    { "SPECS", OME_Submenu, cmsMenuChange, &cmsx_menuSpec },
 #endif
     { "THR LIM TYPE",  OME_TAB,    NULL, &(OSD_TAB_t)   { &rateProfile.throttle_limit_type, THROTTLE_LIMIT_TYPE_COUNT - 1, lookupTableThrottleLimitType } },
     { "THR LIM %",     OME_UINT8,  NULL, &(OSD_UINT8_t) { &rateProfile.throttle_limit_percent, 25,  100,  1 } },

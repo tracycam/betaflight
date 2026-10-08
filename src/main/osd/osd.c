@@ -50,6 +50,7 @@
 #include "common/typeconversion.h"
 #include "common/utils.h"
 #include "common/unit.h"
+#include "common/spec.h"
 
 #include "config/feature.h"
 
@@ -516,6 +517,16 @@ static void osdCompleteInitialization(void)
         version_str_buf[i] = toupper(version_str_buf[i]);
     }
     displayWrite(osdDisplayPort, midCol + 12 - version_str_len, midRow, DISPLAYPORT_SEVERITY_NORMAL, version_str_buf);
+
+#ifdef USE_KAACK_SPEC
+    {
+        const SpecType specType = getCurrentSpec();
+        if (specType != SPEC_COUNT) {
+            const size_t spec_str_len = strlen(specArray[specType].name);
+            displayWrite(osdDisplayPort, midCol - (spec_str_len / 2), midRow + 1, DISPLAYPORT_SEVERITY_NORMAL, specArray[specType].name);
+        }
+    }
+#endif
 
 #ifdef USE_CMS
     displayWrite(osdDisplayPort, midCol - 8, midRow + 2, DISPLAYPORT_SEVERITY_NORMAL, CMS_STARTUP_HELP_TEXT1);

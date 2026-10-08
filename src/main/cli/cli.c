@@ -51,6 +51,7 @@ bool cliMode = false;
 #include "common/printf.h"
 #include "common/printf_serial.h"
 #include "common/strtol.h"
+#include "common/spec.h"
 #include "common/time.h"
 #include "common/typeconversion.h"
 #include "common/utils.h"
@@ -5986,6 +5987,43 @@ static int getTaskAverageRateHz(taskId_e taskId, int *averageDeltaTimeUs)
     return taskInfo.averageDeltaTime10thUs == 0 ? 0 : lrintf(1e7f / taskInfo.averageDeltaTime10thUs);
 }
 
+#ifdef USE_KAACK_SPEC
+static void cliSpec(const char *cmdName, char *cmdline)
+{
+    static const char * const specKeywords[SPEC_COUNT] = {
+        [SPEC_FREEDOM]  = "FREEDOM",
+        [SPEC_MGP_PRO]  = "MGP",
+        [SPEC_MAYHEM]   = "MAYHEM",
+        [SPEC_TT]       = "TT",
+        [SPEC_LLIGUETA] = "LLIGUETA",
+    };
+
+    if (isEmpty(cmdline)) {
+        const SpecType current = getCurrentSpec();
+        if (current != SPEC_COUNT) {
+            cliPrintLinef("Active spec: %s", specArray[current].name);
+        } else {
+            cliPrintLine("No matching spec");
+        }
+        cliPrintLine("Available specs:");
+        for (int i = 0; i < SPEC_COUNT; i++) {
+            cliPrintLinef("  %-9s (%s)", specKeywords[i], specArray[i].name);
+        }
+        return;
+    }
+
+    for (int i = 0; i < SPEC_COUNT; i++) {
+        if (strcasecmp(cmdline, specKeywords[i]) == 0) {
+            setSpec((SpecType)i);
+            cliPrintLinef("Spec set to %s", specArray[i].name);
+            return;
+        }
+    }
+
+    cliPrintErrorLinef(cmdName, "INVALID SPEC: %s", cmdline);
+}
+#endif // USE_KAACK_SPEC
+
 RAM_CODE static void cliStatus(const char *cmdName, char *cmdline)
 {
     UNUSED(cmdName);
@@ -8409,6 +8447,9 @@ const clicmd_t cmdTable[] = {
         "\treset\r\n"
         "\tload <mixer>\r\n"
         "\treverse <servo> <source> r|n", cliServoMix),
+#endif
+#ifdef USE_KAACK_SPEC
+    CLI_COMMAND_DEF("spec", "select motor spec preset", "[FREEDOM|MGP|MAYHEM|TT|LLIGUETA]", cliSpec),
 #endif
     CLI_COMMAND_DEF("status", "show status", NULL, cliStatus),
     CLI_COMMAND_DEF("tasks", "show task stats", NULL, cliTasks),

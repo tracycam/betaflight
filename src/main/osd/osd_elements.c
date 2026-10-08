@@ -177,6 +177,7 @@
 
 #include "pg/flight_plan.h"
 #include "pg/motor.h"
+#include "common/spec.h"
 #include "pg/pilot.h"
 #include "pg/stats.h"
 
@@ -2616,7 +2617,11 @@ bool osdDrawNextActiveElement(displayPort_t *osdDisplayPort)
 #ifdef USE_SPEC_PREARM_SCREEN
 bool osdDrawSpec(displayPort_t *osdDisplayPort)
 {
-    static enum {RPM, POLES, MIXER, THR, MOTOR, BAT, VER} specState = RPM;
+    static enum {RPM, POLES, MIXER, THR, MOTOR, BAT, VER
+#ifdef USE_KAACK_SPEC
+        , SPEC_NAME
+#endif
+    } specState = RPM;
     static int currentRow;
 
     const uint8_t midRow = osdDisplayPort->rows / 2;
@@ -2694,9 +2699,24 @@ bool osdDrawSpec(displayPort_t *osdDisplayPort)
         len = strlen(FC_VERSION_STRING);
         displayWrite(osdDisplayPort, midCol - (len / 2), currentRow++, DISPLAYPORT_SEVERITY_NORMAL, FC_VERSION_STRING);
 
+#ifdef USE_KAACK_SPEC
+        specState = SPEC_NAME;
+        break;
+
+    case SPEC_NAME: {
+        const SpecType specType = getCurrentSpec();
+        if (specType != SPEC_COUNT) {
+            len = strlen(specArray[specType].name);
+            displayWrite(osdDisplayPort, midCol - (len / 2), currentRow++, DISPLAYPORT_SEVERITY_NORMAL, specArray[specType].name);
+        }
+        specState = RPM;
+        return true;
+    }
+#else
         specState = RPM;
 
         return true;
+#endif
     }
 
     return false;
