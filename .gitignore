@@ -66,3 +66,25 @@ eeprom.bin
 AGENTS.md
 CLAUDE.md
 /tasks
+
+.temp/
+
+# Build artifacts
+compile_commands.json
+
+# IDE cache
+.cache/
+
+# Windows Zone.Identifier ADS files
+*:Zone.Identifier
+
+# local agent/tooling artifacts
+/.omo/
+/.opencode/
+
+# local datasheets and vendor modules (not for upstream)
+/docs/UC25IQ128*
+/lib/modules/
+
+# Legacy SDK retained locally after upstream moved its submodule path.
+/lib/main/pico-sdk/
