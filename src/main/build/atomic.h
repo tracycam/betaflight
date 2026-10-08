@@ -45,6 +45,7 @@ __attribute__( ( always_inline ) ) static inline void __set_BASEPRI_MAX_nb(uint3
 // atomic related functions for unittest.
 
 extern uint8_t atomic_BASEPRI;
+extern uint32_t atomic_PRIMASK;
 
 static inline uint8_t __get_BASEPRI(void)
 {
@@ -83,6 +84,24 @@ static inline uint8_t __basepriSetRetVal(uint8_t prio)
     return 1;
 }
 
+static inline uint32_t __primaskGet(void)
+{
+    return atomic_PRIMASK;
+}
+
+static inline void __primaskRestoreMem(uint32_t *val)
+{
+    atomic_PRIMASK = *val;
+    asm volatile ("": : :"memory");
+}
+
+static inline uint32_t __primaskSetMemRetVal(void)
+{
+    atomic_PRIMASK = 1;
+    asm volatile ("": : :"memory");
+    return 1;
+}
+
 #else
 // ARM BASEPRI manipulation
 
@@ -112,6 +131,22 @@ static inline uint8_t __basepriSetRetVal(uint8_t prio)
     return 1;
 }
 
+static inline uint32_t __primaskGet(void)
+{
+    return __get_PRIMASK();
+}
+
+static inline void __primaskRestoreMem(uint32_t *val)
+{
+    __set_PRIMASK(*val);
+}
+
+static inline uint32_t __primaskSetMemRetVal(void)
+{
+    __disable_irq();
+    return 1;
+}
+
 #endif
 
 // Run block with elevated BASEPRI (using BASEPRI_MAX), restoring BASEPRI on exit.
@@ -129,6 +164,10 @@ static inline uint8_t __basepriSetRetVal(uint8_t prio)
 // - gcc 5 and later works as intended, generating quite optimal code
 #define ATOMIC_BLOCK_NB(prio) for ( uint8_t __basepri_save __attribute__ ((__cleanup__ (__basepriRestore), __unused__)) = __get_BASEPRI(), \
                                     __ToDo = __basepriSetRetVal(prio); __ToDo ; __ToDo = 0 ) \
+
+// Run block with all maskable interrupts disabled, restoring PRIMASK on every exit path.
+#define ATOMIC_BLOCK_ALL() for ( uint32_t __primask_save __attribute__ ((__cleanup__ (__primaskRestoreMem), __unused__)) = __primaskGet(), \
+                                         __ToDo = __primaskSetMemRetVal(); __ToDo ; __ToDo = 0 )
 
 // ATOMIC_BARRIER
 // Create memory barrier

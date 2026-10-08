@@ -450,7 +450,7 @@ void spiSequence(const extDevice_t *dev, busSegment_t *segments)
 {
     busDevice_t *bus = dev->bus;
 
-    ATOMIC_BLOCK(NVIC_PRIO_MAX) {
+    ATOMIC_BLOCK_ALL() {
         if (spiIsBusy(dev)) {
             busSegment_t *endSegment;
 
@@ -600,6 +600,26 @@ FAST_IRQ_HANDLER void spiIrqHandler(const extDevice_t *dev)
     }
 }
 
+static FAST_CODE void spiFinishPolledSequence(busDevice_t *bus, busSegment_t *endSegment)
+{
+    const extDevice_t *nextDev = NULL;
+
+    ATOMIC_BLOCK_ALL() {
+        if (endSegment->u.link.dev) {
+            nextDev = endSegment->u.link.dev;
+            bus->curSegment = (busSegment_t *)endSegment->u.link.segments;
+            endSegment->u.link.dev = NULL;
+            endSegment->u.link.segments = NULL;
+        } else {
+            bus->curSegment = (busSegment_t *)BUS_SPI_FREE;
+        }
+    }
+
+    if (nextDev) {
+        spiSequenceStart(nextDev);
+    }
+}
+
 FAST_CODE void spiProcessSegmentsPolled(const extDevice_t *dev)
 {
     busDevice_t *bus = dev->bus;
@@ -633,9 +653,14 @@ FAST_CODE void spiProcessSegmentsPolled(const extDevice_t *dev)
                 break;
 
             case BUS_ABORT:
-                bus->curSegment = (busSegment_t *)BUS_SPI_FREE;
-                segmentComplete = false;
+            {
+                busSegment_t *endSegment = (busSegment_t *)bus->curSegment + 1;
+                while (endSegment->len) {
+                    endSegment++;
+                }
+                spiFinishPolledSequence(bus, endSegment);
                 return;
+            }
 
             case BUS_READY:
             default:
@@ -649,19 +674,7 @@ FAST_CODE void spiProcessSegmentsPolled(const extDevice_t *dev)
         }
     }
 
-    // If a following transaction has been linked, start it
-    if (bus->curSegment->u.link.dev) {
-        busSegment_t *endSegment = (busSegment_t *)bus->curSegment;
-        const extDevice_t *nextDev = endSegment->u.link.dev;
-        busSegment_t *nextSegments = (busSegment_t *)endSegment->u.link.segments;
-        bus->curSegment = nextSegments;
-        endSegment->u.link.dev = NULL;
-        endSegment->u.link.segments = NULL;
-        spiSequenceStart(nextDev);
-    } else {
-        // The end of the segment list has been reached, so mark transactions as complete
-        bus->curSegment = (busSegment_t *)BUS_SPI_FREE;
-    }
+    spiFinishPolledSequence(bus, (busSegment_t *)bus->curSegment);
 }
 
 #endif
