@@ -35,6 +35,7 @@ PG_REGISTER(gyroConfig_t, gyroConfig, PG_GYRO_CONFIG, 0);
 bool icm426xxSpiGyroDetect(gyroDev_t *gyro);
 bool icm426xxSpiAccDetect(accDev_t *acc);
 void icm426xxAccInit(accDev_t *acc);
+uint8_t icm426xxSpiDetect(const extDevice_t *dev);
 
 // MUST mirror the file-static definitions in src/main/drivers/accgyro/accgyro_spi_icm426xx.c
 // (search for `typedef struct aafConfig_s` and `typedef enum { AAF_CONFIG_258HZ`).
@@ -240,6 +241,52 @@ TEST(AccgyroSpiIcm426xx, AafNormalIim42653)
     EXPECT_EQ(AAF_DELT_42688_NORMAL, cfg.delt);
 }
 
+static uint8_t testWhoAmI;
+
+TEST(AccgyroSpiIcm426xx, DetectIcm40608ByWhoAmI)
+{
+    extDevice_t dev = {};
+    testWhoAmI = 0x39;
+    EXPECT_EQ(ICM_40608_SPI, icm426xxSpiDetect(&dev));
+    testWhoAmI = 0;
+}
+
+TEST(AccgyroSpiIcm426xx, DetectUnknownWhoAmIRejected)
+{
+    extDevice_t dev = {};
+    testWhoAmI = 0;
+    EXPECT_EQ(MPU_NONE, icm426xxSpiDetect(&dev));
+}
+
+TEST(AccgyroSpiIcm426xx, GyroScaleIcm40608)
+{
+    gyroDev_t gyro = {};
+    gyro.mpuDetectionResult.sensor = ICM_40608_SPI;
+    ASSERT_TRUE(icm426xxSpiGyroDetect(&gyro));
+    EXPECT_FLOAT_EQ(GYRO_SCALE_2000DPS, gyro.scale);
+    EXPECT_NE(nullptr, gyro.initFn);
+    EXPECT_NE(nullptr, gyro.readFn);
+}
+
+TEST(AccgyroSpiIcm426xx, AccOneGIcm40608)
+{
+    accDev_t acc = {};
+    acc.mpuDetectionResult.sensor = ICM_40608_SPI;
+    ASSERT_TRUE(icm426xxSpiAccDetect(&acc));
+    ASSERT_NE(nullptr, acc.initFn);
+    acc.initFn(&acc);
+    EXPECT_EQ(2048u, acc.acc_1G);
+    EXPECT_NE(nullptr, acc.readFn);
+}
+
+TEST(AccgyroSpiIcm426xx, AafNormalIcm40608)
+{
+    const aafConfig_t cfg = getGyroAafConfig(ICM_40608_SPI, static_cast<aafConfig_e>(GYRO_HARDWARE_LPF_NORMAL));
+    EXPECT_EQ(21u, cfg.delt);
+    EXPECT_EQ(440u, cfg.deltSqr);
+    EXPECT_EQ(6u, cfg.bitshift);
+}
+
 // --- STUBS for SPI / IO / MPU symbols pulled in by the driver TU -------------
 
 extern "C" {
@@ -255,11 +302,9 @@ uint16_t spiCalculateDivider(uint32_t)
 
 void spiWriteReg(const extDevice_t *, uint8_t, uint8_t) {}
 
-uint8_t spiReadRegMsk(const extDevice_t *, uint8_t)
+uint8_t spiReadRegMsk(const extDevice_t *, uint8_t reg)
 {
-    // Drives the WHO_AM_I detection loop in icm426xxSpiDetect (not exercised by these tests);
-    // returning 0 is harmless because the tests never call icm426xxSpiDetect.
-    return 0;
+    return reg == MPU_RA_WHO_AM_I ? testWhoAmI : 0;
 }
 
 void mpuGyroInit(gyroDev_t *) {}

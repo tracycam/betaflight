@@ -117,7 +117,8 @@ accgyro_spi_icm426xx_unittest_DEFINES := \
                 USE_ACCGYRO_ICM42686P= \
                 USE_GYRO_SPI_ICM42688P= \
                 USE_ACCGYRO_IIM42652= \
-                USE_ACCGYRO_IIM42653=
+                USE_ACCGYRO_IIM42653= \
+                USE_ACCGYRO_ICM40608=
 
 # This test is disabled due to build errors.
 # Its source code is archived in unit/battery_unittest.cc.txt
