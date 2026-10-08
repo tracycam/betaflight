@@ -1,0 +1,77 @@
+Betaflight self-maintenance / 2026.6
+
+基线：上游正式 release 2026.6.2
+Release：https://github.com/betaflight/betaflight/releases/tag/2026.6.2
+基线提交：e0b7bb01b17b21351057e9ead2d1ab39dd44fa16
+本地分支：self-maintenance/2026.6-maintenance
+独立工作目录：/home/rate/betaflight-2026.6-maintenance
+
+configs 保持当前内容：
+- 来源是原工作区 src/config 的 custom-targets 分支，提交 de3b403。
+- 独立克隆后复制全部未提交修改和非忽略的未跟踪文件；674 个文件逐字节一致。
+- 没有修改任何 config.h 或 defaults.txt；未提交内容仍保持未提交。
+- .gitmodules 使用 tracycam/bf-config、custom-targets，并设 update = none。
+- 普通切换固件分支保持 configs；默认子模块更新和构建自动初始化会跳过 configs。
+- 显式 --checkout / --force 等强制子模块操作仍可覆盖此策略，应仅在有意变更 configs 时使用。
+- 新旧工作目录拥有独立 configs 副本，后续配置修改需要单独同步。
+- 在固件构建层映射 STM32F7X2 -> STM32F722、STM32G47X -> STM32G474。
+
+保留的维护功能：
+- ICM40608（339ba3b95）：WHO_AM_I 0x39、2000dps/16g、ICM42605 AAF。
+  针对新版 sensors.c 注册名称，追加枚举以保留上游已有传感器编号。
+  保留上游 IIM42652/53 的量程、温度和 AAF 实现。
+- LPS22HB/HH（7ef6c7540）：I2C/SPI 驱动、检测和默认总线配置。
+  保留上游新增的 BMP580/BMP581/SPA06_003 编号。
+- LSM6DSV16X（b84db3a89、3a0606ecb、27400722a）：reset 后稳定延时、
+  单次写入模式+ODR、明确的小端采样解码、LPF 表和 FIFO mask 修正。
+- 虚拟电流 RMS 低通（1b7a7508a）：保留 USE_VIRTUAL_CURRENT_METER_LPF 开关。
+- 默认 rates 类型（339ba3b95）：保留 DEFAULT_RATES_TYPE。
+- AT32 无晶振 HICK 回退（64749122b）。
+- MH2425（7b4ff290b、8cb26fc6c）：开关控制的 DShot DMA、ADC 中断模式、
+  CCM fast code 和专用链接脚本；保留新版外设抽象及 F4 I2C 写入顺序修复。
+- GPIO DShot bitbang 极性（c05000020）：不依赖电机引脚的 timer 映射；
+  STM32 新版的无效引脚检查改为检查 GPIO，兼容无 motor TIMER_PIN_MAPPING 的目标。
+- UCUN UC25IQ128 NOR Flash（0a78feb65）。
+- KAACK spec（13efc617b）：CLI、CMS、OSD 及原有测试。
+- 通用 SPI 队列原子性（b226c523f、7ab28c3d5）：屏蔽 priority-zero 中断，
+  保证 polled 完成/abort 时队列交接原子性。独立于 SCH16T 驱动迁入。
+- 保留工作区 MSP/DFU helper 和使用说明。
+
+上游已吸收或替代，舍弃旧补丁：
+- IIM42652 支持和 IIM42653 量程旧实现：采用 1c2c80ee5 / #15261 及当前官方实现。
+- LSM6DSK320X 驱动（4f9cdce10）：采用 f26d59adf / #14891。
+- LSM6DSV16X 4000dps 编码：采用 7efb8e240 / #15043；不覆盖官方常量。
+- UART HAL ORE 修复（7d8797097）：bf14d1302 / #15035 已迁移到 LL，直接清除 ORE。
+- AT32/APM32 requestTelemetry 旧桥接修复（19c811b2b）：4d2d98463 / #15326 已吸收。
+- H743 DMA 专用 64KB 链接区域（f6b4761ca）：2879a18f8 / #15441 已从 MPU 层
+  对齐并扩大覆盖范围，保留官方内存布局。
+- USB BOARD_NAME 产品名称：采用上游已有实现。
+- 旧 release 的版本号、上游 backport、IDE 缓存、生成物和代理状态不复制。
+- 按用户选择，SCH16T 驱动、测试目标对应源码和未提交实验代码继续留在 feature 分支。
+
+验证：
+全部使用 make <target> -j128。
+- F405-BT_v1.5：通过。
+- F722-BT_v1.5：通过（映射到 STM32F722）。
+- AIRBOTSTDH743：通过。
+- F405-BT-v1.5-MH：通过。
+- RATEF435_V4：通过。
+- BETAFPVG473：通过（映射到 STM32G474）。
+- F405-BT-v1.5-MH EXTRA_FLAGS=-DMH2425_COMPAT_PATCH_ADC_INT：通过。
+- RATEF435_V4 HSE_VALUE=0：通过。
+- 特殊编译验证后重新编译默认 MH/AT32 配置，生成的常规固件使用默认参数。
+- 上述 8 项构建没有编译警告或错误。
+- ICM426xx 24 项、KAACK spec 5 项、gyro 5 项、atomic 6 项，共 40 项单测通过。
+- 6 个常规目标的 .bin 均由最新 .elf 重新生成，位于 obj/。
+- 未进行硬件刷写或实机验证。
+
+实际限制：
+- F722 ITCM 使用 15992 / 16384 字节，剩余 392 字节。
+- 保留的 AVIARAF765NDAA config 使用 STM32F765；原工作区及新版均缺少该 MCU
+  target 目录。该项是既有配置限制，本次没有改写其 config.h 或宣称完成该目标验证。
+- 主分支和 configs 的本地提交均没有推送远程；configs 还有原有未提交修改。
+
+继续维护：
+cd /home/rate/betaflight-2026.6-maintenance
+以该 worktree 的固件源码为维护线，configs 独立维护。
+原目录 /home/rate/betaflight 仍是 feat/sch16t-k10，其源码和 configs 修改保留。

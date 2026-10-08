@@ -81,6 +81,36 @@ TEST(AtomicUnittest, TestAtomicBlockAll)
     EXPECT_EQ(atomic_PRIMASK, 1);
 }
 
+static bool returnFromAtomicBlockAll()
+{
+    ATOMIC_BLOCK_ALL() {
+        EXPECT_EQ(atomic_PRIMASK, 1);
+        return true;
+    }
+    return false;
+}
+
+TEST(AtomicUnittest, TestAtomicBlockAllEarlyReturn)
+{
+    atomic_PRIMASK = 0;
+    EXPECT_TRUE(returnFromAtomicBlockAll());
+    EXPECT_EQ(atomic_PRIMASK, 0);
+
+    atomic_PRIMASK = 1;
+    EXPECT_TRUE(returnFromAtomicBlockAll());
+    EXPECT_EQ(atomic_PRIMASK, 1);
+}
+
+TEST(AtomicUnittest, TestAtomicBlockAllBreak)
+{
+    atomic_PRIMASK = 0;
+    ATOMIC_BLOCK_ALL() {
+        EXPECT_EQ(atomic_PRIMASK, 1);
+        break;
+    }
+    EXPECT_EQ(atomic_PRIMASK, 0);
+}
+
 struct barrierTrace {
     int enter, leave;
 };
