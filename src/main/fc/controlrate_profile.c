@@ -39,13 +39,17 @@ controlRateConfig_t *currentControlRateProfile;
 
 PG_REGISTER_ARRAY_WITH_RESET_FN(controlRateConfig_t, CONTROL_RATE_PROFILE_COUNT, controlRateProfiles, PG_CONTROL_RATE_PROFILES, 7);
 
+#ifndef DEFAULT_RATES_TYPE
+#define DEFAULT_RATES_TYPE RATES_TYPE_ACTUAL
+#endif
+
 void pgResetFn_controlRateProfiles(controlRateConfig_t *controlRateConfig)
 {
     for (int i = 0; i < CONTROL_RATE_PROFILE_COUNT; i++) {
         RESET_CONFIG(controlRateConfig_t, &controlRateConfig[i],
             .thrMid8 = 50,
             .thrExpo8 = 0,
-            .rates_type = RATES_TYPE_ACTUAL,
+            .rates_type = DEFAULT_RATES_TYPE,
             .rcRates[FD_ROLL] = 7,
             .rcRates[FD_PITCH] = 7,
             .rcRates[FD_YAW] = 7,
