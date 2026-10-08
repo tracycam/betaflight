@@ -18,6 +18,7 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -178,28 +179,40 @@ void currentMeterADCRead(currentMeter_t *meter)
 #ifdef USE_VIRTUAL_CURRENT_METER
 currentSensorVirtualState_t currentMeterVirtualState;
 
+#ifdef USE_VIRTUAL_CURRENT_METER_LPF
+static pt1Filter_t virtualiBatFilter;
+#endif
+
 void currentMeterVirtualInit(void)
 {
     memset(&currentMeterVirtualState, 0, sizeof(currentSensorVirtualState_t));
+#ifdef USE_VIRTUAL_CURRENT_METER_LPF
+    pt1FilterInit(&virtualiBatFilter, pt1FilterGain(GET_BATTERY_LPF_FREQUENCY(batteryConfig()->ibatLpfPeriod), HZ_TO_INTERVAL(50)));
+#endif
 }
 
 void currentMeterVirtualRefresh(int32_t lastUpdateAt, bool armed, bool throttleLowAndMotorStop, int32_t throttleOffset)
 {
-    currentMeterVirtualState.amperage = (int32_t)currentSensorVirtualConfig()->offset;
+    currentMeterVirtualState.amperageLatest = (int32_t)currentSensorVirtualConfig()->offset;
     if (armed) {
         if (throttleLowAndMotorStop) {
             throttleOffset = 0;
         }
 
         int throttleFactor = throttleOffset + (throttleOffset * throttleOffset / 50); // FIXME magic number 50. Possibly use thrustLinearization if configured.
-        currentMeterVirtualState.amperage += throttleFactor * (int32_t)currentSensorVirtualConfig()->scale / 1000;
+        currentMeterVirtualState.amperageLatest += throttleFactor * (int32_t)currentSensorVirtualConfig()->scale / 1000;
     }
-    updateCurrentmAhDrawnState(&currentMeterVirtualState.mahDrawnState, currentMeterVirtualState.amperage, lastUpdateAt);
+#ifdef USE_VIRTUAL_CURRENT_METER_LPF
+    currentMeterVirtualState.amperage = sqrtf(pt1FilterApply(&virtualiBatFilter, sq((float)currentMeterVirtualState.amperageLatest)));
+#else
+    currentMeterVirtualState.amperage = currentMeterVirtualState.amperageLatest;
+#endif
+    updateCurrentmAhDrawnState(&currentMeterVirtualState.mahDrawnState, currentMeterVirtualState.amperageLatest, lastUpdateAt);
 }
 
 void currentMeterVirtualRead(currentMeter_t *meter)
 {
-    meter->amperageLatest = currentMeterVirtualState.amperage;
+    meter->amperageLatest = currentMeterVirtualState.amperageLatest;
     meter->amperage = currentMeterVirtualState.amperage;
     meter->mAhDrawn = currentMeterVirtualState.mahDrawnState.mAhDrawn;
 }

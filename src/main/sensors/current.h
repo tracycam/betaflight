@@ -84,7 +84,8 @@ PG_DECLARE(currentSensorADCConfig_t, currentSensorADCConfig);
 
 typedef struct currentMeterVirtualState_s {
     currentMeterMAhDrawnState_t mahDrawnState;
-    int32_t amperage;           // current read by current sensor in centiamperes (1/100th A)
+    int32_t amperage;           // current read by current sensor in centiamperes (1/100th A) (filtered)
+    int32_t amperageLatest;     // current read by current sensor in centiamperes (1/100th A) (unfiltered)
 } currentSensorVirtualState_t;
 
 typedef struct currentSensorVirtualConfig_s {
