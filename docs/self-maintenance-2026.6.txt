@@ -4,16 +4,16 @@ Betaflight self-maintenance / 2026.6
 Release：https://github.com/betaflight/betaflight/releases/tag/2026.6.2
 基线提交：e0b7bb01b17b21351057e9ead2d1ab39dd44fa16
 本地分支：self-maintenance/2026.6-maintenance
-独立工作目录：/home/rate/betaflight-2026.6-maintenance
+工作目录：/home/rate/betaflight
 
 configs 保持当前内容：
 - 来源是原工作区 src/config 的 custom-targets 分支，提交 de3b403。
-- 独立克隆后复制全部未提交修改和非忽略的未跟踪文件；674 个文件逐字节一致。
+- 直接使用原工作区 src/config，保留未提交修改和未跟踪文件；切换前后 674 个文件逐字节一致。
 - 没有修改任何 config.h 或 defaults.txt；未提交内容仍保持未提交。
 - .gitmodules 使用 tracycam/bf-config、custom-targets，并设 update = none。
 - 普通切换固件分支保持 configs；默认子模块更新和构建自动初始化会跳过 configs。
 - 显式 --checkout / --force 等强制子模块操作仍可覆盖此策略，应仅在有意变更 configs 时使用。
-- 新旧工作目录拥有独立 configs 副本，后续配置修改需要单独同步。
+- configs 保持在原位置，没有随固件分支切换。
 - 在固件构建层映射 STM32F7X2 -> STM32F722、STM32G47X -> STM32G474。
 
 保留的维护功能：
@@ -72,6 +72,7 @@ configs 保持当前内容：
 - 主分支和 configs 的本地提交均没有推送远程；configs 还有原有未提交修改。
 
 继续维护：
-cd /home/rate/betaflight-2026.6-maintenance
-以该 worktree 的固件源码为维护线，configs 独立维护。
-原目录 /home/rate/betaflight 仍是 feat/sch16t-k10，其源码和 configs 修改保留。
+cd /home/rate/betaflight
+当前目录使用新维护线，configs 独立维护。
+原未提交源码改动保存在 Git stash 85fa115a7283b5c008ceb51fde295047b441b1f0，可在原开发分支恢复。
+额外创建的维护 worktree 已移除；已编译固件保留在当前目录 obj/。
