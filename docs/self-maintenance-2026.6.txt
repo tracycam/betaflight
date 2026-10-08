@@ -74,5 +74,7 @@ configs 保持当前内容：
 继续维护：
 cd /home/rate/betaflight
 当前目录使用新维护线，configs 独立维护。
-原未提交源码改动保存在 Git stash 85fa115a7283b5c008ceb51fde295047b441b1f0，可在原开发分支恢复。
+SCH16T DMA 采样改动已提交到 feat/sch16t-k10：06370fd7e8971245e65a5d36057fdcc632d1f848。
+原 MAX7456/A7456HD OSD 调试改动按用户要求舍弃。
+刷机技能文档修改单独保存在 Git stash bb10d409ff4e0332fd64bc629c0ba64c94807ac6，并保留本地副本。
 额外创建的维护 worktree 已移除；已编译固件保留在当前目录 obj/。
