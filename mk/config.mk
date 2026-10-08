@@ -88,6 +88,11 @@ ifeq ($(strip $(TARGET)),)
 $(error No TARGET identified. Is the $(CONFIG_HEADER_FILE) valid for $(CONFIG)?)
 endif
 
+# Keep existing board configs usable after upstream MCU target renames.
+CONFIG_MCU_ALIAS_STM32F7X2 := STM32F722
+CONFIG_MCU_ALIAS_STM32G47X := STM32G474
+TARGET := $(or $(CONFIG_MCU_ALIAS_$(TARGET)),$(TARGET))
+
 # Optional EXST address adjustment
 EXST_ADJUST_VMA := $(call pp_def_value,$(CONFIG_HEADER_FILE),FC_VMA_ADDRESS)
 ifneq ($(strip $(EXST_ADJUST_VMA)),)
@@ -133,4 +138,3 @@ ifeq ($(wildcard $(CONFIG_DIR)/configs/),)
 		exit 1; \
 	fi
 endif
-

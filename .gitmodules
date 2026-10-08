@@ -1,8 +1,9 @@
 [submodule "config"]
 	path = src/config
-	url = https://github.com/betaflight/config.git
-	branch = master
+	url = https://github.com/tracycam/bf-config.git
+	branch = custom-targets
 	ignore = dirty
+	update = none
 [submodule "lib/modules/pico-sdk"]
 	path = lib/modules/pico-sdk
 	url = https://github.com/raspberrypi/pico-sdk.git
