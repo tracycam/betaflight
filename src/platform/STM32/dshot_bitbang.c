@@ -769,7 +769,7 @@ bool dshotBitbangDevInit(motorDevice_t *device, const motorDevConfig_t *motorCon
         const unsigned reorderedMotorIndex = motorConfig->motorOutputReordering[motorIndex];
         const IO_t io = IOGetByTag(motorConfig->ioTags[reorderedMotorIndex]);
 
-        if (timerHardware == NULL) {
+        if (!io) {
             /* not enough motors initialised for the mixer or a break in the motors */
             device->vTable = NULL;
             dshotMotorCount = 0;
