@@ -51,11 +51,24 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_nb(uint32_t base
     PFIC_ITHRESDR = basePri & 0xF0;
 }
 
-__attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb(uint32_t basePri)
+__attribute__((always_inline)) static inline uint32_t ch32AtomicPriority(uint32_t basePri)
 {
     const uint32_t priority = basePri & 0xF0;
+
+    if (priority == 0) {
+        return 0x10;
+    }
+    if (priority >= 0xF0) {
+        return 0xF0;
+    }
+    return priority + 0x10;
+}
+
+__attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb(uint32_t basePri)
+{
+    const uint32_t priority = ch32AtomicPriority(basePri);
     const uint32_t current = __get_BASEPRI();
-    if (priority != 0 && (current == 0 || priority < current)) {
+    if (current == 0 || priority < current) {
         PFIC_ITHRESDR = priority;
     }
 }
