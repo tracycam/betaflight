@@ -30,9 +30,9 @@
 
 
 // Chip Unique ID on H41X
-#define U_ID_0 (*(uint32_t*)0x1ffff7e8)
-#define U_ID_1 (*(uint32_t*)0x1ffff7ec)
-#define U_ID_2 (*(uint32_t*)0x1ffff7f0)
+#define U_ID_0 (*(uint32_t *)0x1ffff7e8)
+#define U_ID_1 (*(uint32_t *)0x1ffff7ec)
+#define U_ID_2 (*(uint32_t *)0x1ffff7f0)
 
 #define FLASH_CONFIG_STREAMER_BUFFER_SIZE   256     // fast program is 256bytes
 #define FLASH_CONFIG_BUFFER_TYPE            uint32_t
@@ -89,12 +89,11 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 
 #define SET_BIT(REG, BIT)     ((REG) |= (BIT))
 #define CLEAR_BIT(REG, BIT)   ((REG) &= ~(BIT))
-#define READ_BIT(REG, BIT)    ((REG) & (BIT))
+#define READ_BIT(REG, BIT)    ((REG)&(BIT))
 #define CLEAR_REG(REG)        ((REG) = (0x0))
 #define WRITE_REG(REG, VAL)   ((REG) = (VAL))
 #define READ_REG(REG)         ((REG))
 #define MODIFY_REG(REG, CLEARMASK, SETMASK)  WRITE_REG((REG), (((READ_REG(REG)) & (~(CLEARMASK))) | (SETMASK)))
-
 #endif
 
 
@@ -117,7 +116,6 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 #define USE_LATE_TASK_STATISTICS
 
 #define PLATFORM_TRAIT_ADC_DEVICE 1
-
 #endif
 
 
@@ -134,9 +132,9 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 
 #ifdef CH32H4
 // Move ISRs to fast ram to avoid flash latency.
-#define FAST_IRQ_HANDLER FAST_CODE 
-#else 
-#define FAST_IRQ_HANDLER  
+#define FAST_IRQ_HANDLER FAST_CODE
+#else
+#define FAST_IRQ_HANDLER
 #endif
 
 //load all data to DTCM
@@ -145,7 +143,7 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 #define STATIC_DMA_DATA_AUTO      __attribute__((aligned(32)))  static
 
 #define DMA_RAM      __attribute__((aligned(32)))
-#define DMA_RW_AXI  
+#define DMA_RW_AXI
 #define DMA_RAM_R
 #define DMA_RAM_W
 #define DMA_RAM_RW
@@ -174,29 +172,29 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 #define GPIO_SPEED_HIGH         0x02
 #define GPIO_SPEED_VERY_HIGH    0x03
 
-#define GPIO_PULL_NONE       0x00          
-#define GPIO_PULL_DOWN       0x01          
-#define GPIO_PULL_UP         0x02          
+#define GPIO_PULL_NONE       0x00
+#define GPIO_PULL_DOWN       0x01
+#define GPIO_PULL_UP         0x02
 
-//bit 0   1      2   3      4    5       6  7  
-//  DIR[1:0]   MODE[1:0]   SPEED[1:0]   PD=0,PU=1  
+//bit 0   1      2   3      4    5       6  7
+//  DIR[1:0]   MODE[1:0]   SPEED[1:0]   PD=0,PU=1
 #define IO_CONFIG(dir, mode, speed, pupd) ((dir) | ((mode) << 2) | ((speed) << 4) | ((pupd) << 6))
 
 
-#define IOCFG_OUT_PP         IO_CONFIG(DIR_OUT , GPIO_MODE_OUT_PP , GPIO_SPEED_VERY_HIGH , GPIO_PULL_NONE )  // TODO
-#define IOCFG_OUT_PP_UP      IO_CONFIG(DIR_OUT , GPIO_MODE_OUT_PP , GPIO_SPEED_VERY_HIGH , GPIO_PULL_UP )
-#define IOCFG_OUT_PP_25      IO_CONFIG(DIR_OUT , GPIO_MODE_OUT_PP , GPIO_SPEED_VERY_HIGH,  GPIO_PULL_NONE)
-#define IOCFG_OUT_OD         IO_CONFIG(DIR_OUT , GPIO_MODE_OUT_OD , GPIO_SPEED_VERY_HIGH , GPIO_PULL_NONE)
+#define IOCFG_OUT_PP         IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)      // TODO
+#define IOCFG_OUT_PP_UP      IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_UP)
+#define IOCFG_OUT_PP_25      IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
+#define IOCFG_OUT_OD         IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_OD, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
 
-#define IOCFG_AF_PP          IO_CONFIG(DIR_OUT , GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH , GPIO_PULL_NONE)
-#define IOCFG_AF_PP_PD       IO_CONFIG(DIR_OUT , GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH , GPIO_PULL_DOWN)
-#define IOCFG_AF_PP_UP       IO_CONFIG(DIR_OUT , GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH , GPIO_PULL_UP)
-#define IOCFG_AF_OD          IO_CONFIG(DIR_OUT , GPIO_MODE_OUT_AF_OD, GPIO_SPEED_VERY_HIGH , GPIO_PULL_NONE)
+#define IOCFG_AF_PP          IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
+#define IOCFG_AF_PP_PD       IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_DOWN)
+#define IOCFG_AF_PP_UP       IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_UP)
+#define IOCFG_AF_OD          IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_OD, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
 
-#define IOCFG_IPD            IO_CONFIG(DIR_IN  , GPIO_MODE_IN_PULL,   GPIO_SPEED_VERY_HIGH , GPIO_PULL_DOWN)
-#define IOCFG_IPU            IO_CONFIG(DIR_IN  , GPIO_MODE_IN_PULL,   GPIO_SPEED_VERY_HIGH , GPIO_PULL_UP)
-#define IOCFG_IN_FLOATING    IO_CONFIG(DIR_IN  , GPIO_MODE_IN_FLOAT,  GPIO_SPEED_VERY_HIGH , GPIO_PULL_NONE)
-#define IOCFG_IPU_25         IO_CONFIG(DIR_IN  , GPIO_MODE_IN_PULL,   GPIO_SPEED_VERY_HIGH , GPIO_PULL_UP)
+#define IOCFG_IPD            IO_CONFIG(DIR_IN, GPIO_MODE_IN_PULL, GPIO_SPEED_VERY_HIGH, GPIO_PULL_DOWN)
+#define IOCFG_IPU            IO_CONFIG(DIR_IN, GPIO_MODE_IN_PULL, GPIO_SPEED_VERY_HIGH, GPIO_PULL_UP)
+#define IOCFG_IN_FLOATING    IO_CONFIG(DIR_IN, GPIO_MODE_IN_FLOAT, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
+#define IOCFG_IPU_25         IO_CONFIG(DIR_IN, GPIO_MODE_IN_PULL, GPIO_SPEED_VERY_HIGH, GPIO_PULL_UP)
 
 #define IO_CONFIG_GET_MODE(cfg)  (((cfg) >> 2) & 0x03)
 #define IO_CONFIG_GET_SPEED(cfg) (((cfg) >> 4) & 0x03)
@@ -220,8 +218,8 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 #define CHECK_SPI_RX_DATA_AVAILABLE(instance)  (READ_BIT(instance->STATR, SPI_I2S_FLAG_RXNE) == (SPI_I2S_FLAG_RXNE))
 #define SPI_RX_DATA_REGISTER(base) ((base)->DATAR)
 
-#define MAX_SPI_PIN_SEL    5        
-// #define USE_TX_IRQ_HANDLER  
+#define MAX_SPI_PIN_SEL    5
+// #define USE_TX_IRQ_HANDLER
 
 
 #define UART_TX_BUFFER_ATTRIBUTE                    // NONE
@@ -244,16 +242,17 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 // #define DMA_TRAIT_CHANNEL 1
 
 #define MAX_MSP_PORT_COUNT 4  //default msp count is 3, it would not be enough for us
-
 #endif
 
 #define DMA_CHANREQ_STRING "Request"
 
 
 #define NVIC_PRIORITY_GROUPING  0x500
-#define NVIC_BUILD_PRIORITY(base,sub) (((((base)<<(4-(7-(NVIC_PRIORITY_GROUPING>>8))))|((sub)&(0x0f>>(7-(NVIC_PRIORITY_GROUPING>>8)))))<<4)&0xf0)
-#define NVIC_PRIORITY_BASE(prio) (((prio)>>(4-(7-(NVIC_PRIORITY_GROUPING>>8))))>>4)
-#define NVIC_PRIORITY_SUB(prio) (((prio)>>4)&(0x0f>>(7-(NVIC_PRIORITY_GROUPING>>8))))
+#define NVIC_BUILD_PRIORITY(base, \
+                            sub) (((((base) << (4 - (7 - (NVIC_PRIORITY_GROUPING >> 8)))) | \
+                                    ((sub) & (0x0f >> (7 - (NVIC_PRIORITY_GROUPING >> 8))))) << 4) & 0xf0)
+#define NVIC_PRIORITY_BASE(prio) (((prio) >> (4 - (7 - (NVIC_PRIORITY_GROUPING >> 8)))) >> 4)
+#define NVIC_PRIORITY_SUB(prio) (((prio) >> 4) & (0x0f >> (7 - (NVIC_PRIORITY_GROUPING >> 8))))
 
 
 #define FLASH_CONFIG_BUFFER_TYPE      uint32_t

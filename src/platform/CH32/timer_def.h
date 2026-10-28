@@ -26,14 +26,16 @@
 #include "platform/dma.h"
 
 #ifdef USE_THEIA_OSD
-//timer2/10/11/12 reserved for internal OSD 
-#define USED_TIMERS  ( BIT(1) | BIT(3) | BIT(4) | BIT(5) | BIT(6) | BIT(7) | BIT(8) | BIT(9) )
-#define TIMUP_TIMERS ( BIT(1) | BIT(3) | BIT(4) | BIT(5) | BIT(6) | BIT(7) | BIT(8) | BIT(9) )
+//timer2/10/11/12 reserved for internal OSD
+#define USED_TIMERS  (BIT(1) | BIT(3) | BIT(4) | BIT(5) | BIT(6) | BIT(7) | BIT(8) | BIT(9))
+#define TIMUP_TIMERS (BIT(1) | BIT(3) | BIT(4) | BIT(5) | BIT(6) | BIT(7) | BIT(8) | BIT(9))
 #define FULL_TIMER_CHANNEL_COUNT        130
 #define HARDWARE_TIMER_DEFINITION_COUNT BITCOUNT(USED_TIMERS)
 #else
-#define USED_TIMERS  ( BIT(1) | BIT(2) | BIT(3) | BIT(4) | BIT(5) | BIT(6) | BIT(7) | BIT(8) | BIT(9) | BIT(10) | BIT(11) | BIT(12))
-#define TIMUP_TIMERS ( BIT(1) | BIT(2) | BIT(3) | BIT(4) | BIT(5) | BIT(6) | BIT(7) | BIT(8) | BIT(9) | BIT(10) | BIT(11) | BIT(12))
+#define USED_TIMERS  (BIT(1) | BIT(2) | BIT(3) | BIT(4) | BIT(5) | BIT(6) | BIT(7) | BIT(8) | BIT(9) | BIT(10) | \
+                      BIT(11) | BIT(12))
+#define TIMUP_TIMERS (BIT(1) | BIT(2) | BIT(3) | BIT(4) | BIT(5) | BIT(6) | BIT(7) | BIT(8) | BIT(9) | BIT(10) | \
+                      BIT(11) | BIT(12))
 #define FULL_TIMER_CHANNEL_COUNT        130
 #define HARDWARE_TIMER_DEFINITION_COUNT BITCOUNT(USED_TIMERS)
 #endif
@@ -108,7 +110,9 @@
 
 // Create accessor macro and call it with entry from table
 // DMA_VARIANT_MISSING are used to satisfy variable arguments (-Wpedantic) and to get better error message (undefined symbol instead of preprocessor error)
-#define DEF_TIM_DMA_GET(variant, timch) PP_CALL(CONCAT(DEF_TIM_DMA_GET_VARIANT__, variant), CONCAT(DEF_TIM_DMA__, DEF_TIM_TCH2BTCH(timch)), DMA_VARIANT_MISSING, DMA_VARIANT_MISSING, ERROR)
+#define DEF_TIM_DMA_GET(variant, timch) PP_CALL(CONCAT(DEF_TIM_DMA_GET_VARIANT__, variant), \
+                                                CONCAT(DEF_TIM_DMA__, DEF_TIM_TCH2BTCH( \
+                                                           timch)), DMA_VARIANT_MISSING, DMA_VARIANT_MISSING, ERROR)
 
 #define DEF_TIM_DMA_GET_VARIANT__0(_0, ...) _0
 #define DEF_TIM_DMA_GET_VARIANT__1(_0, _1, ...) _1
@@ -145,29 +149,29 @@
 #define DEF_TIM_OUTPUT__D(chan_n, n_channel) PP_IIF(n_channel, TIMER_OUTPUT_N_CHANNEL, TIMER_OUTPUT_NONE)
 
 /*
- DEF_TIM(tim, chan, pin, flags, out, dmaopt, upopt)
+   DEF_TIM(tim, chan, pin, flags, out, dmaopt, upopt)
         @tim,
         @chan    tmr & channel
         @pin     output pin
         @out     0 for normal 1 for N_Channel
         @dmaopt  dma channel index used for timer channel data transmit
         @upopt   USE_DSHOT_DMAR  timeup dma channel index
-*/
+ */
 #define DEF_TIM(tim, chan, pin, out, dmaopt, upopt) {                   \
-    (timerResource_t *)tim,                                                                \
-    TIMER_GET_IO_TAG(pin),                                              \
-    DEF_TIM_CHANNEL(CH_ ## chan),                                       \
-    (DEF_TIM_OUTPUT(CH_ ## chan) | out),                                \
-    DEF_TIM_AF(TCH_## tim ## _ ## chan, pin)                            \
-    DEF_TIM_DMA_COND(/* add comma */ ,                                  \
-        DEF_TIM_DMA_CHANNEL(dmaopt, TCH_## tim ## _ ## chan),           \
-        DEF_TIM_DMA_REQUEST(TCH_## tim ## _ ## chan)                    \
-    )                                                                   \
-    DEF_TIM_DMA_COND(/* add comma */ ,                                  \
-        DEF_TIM_DMA_CHANNEL(upopt, TCH_## tim ## _UP),                  \
-        DEF_TIM_DMA_REQUEST(TCH_## tim ## _UP),                         \
-        DEF_TIM_DMA_HANDLER(upopt, TCH_## tim ## _UP)                   \
-    )                                                                   \
+        (timerResource_t *)tim,                                                                \
+        TIMER_GET_IO_TAG(pin),                                              \
+        DEF_TIM_CHANNEL(CH_ ## chan),                                       \
+        (DEF_TIM_OUTPUT(CH_ ## chan) | out),                                \
+        DEF_TIM_AF(TCH_ ## tim ## _ ## chan, pin)                            \
+        DEF_TIM_DMA_COND(/* add comma */,                                  \
+                                        DEF_TIM_DMA_CHANNEL(dmaopt, TCH_ ## tim ## _ ## chan),           \
+                                        DEF_TIM_DMA_REQUEST(TCH_ ## tim ## _ ## chan)                    \
+                                        )                                                                   \
+        DEF_TIM_DMA_COND(/* add comma */,                                  \
+                                        DEF_TIM_DMA_CHANNEL(upopt, TCH_ ## tim ## _UP),                  \
+                                        DEF_TIM_DMA_REQUEST(TCH_ ## tim ## _UP),                         \
+                                        DEF_TIM_DMA_HANDLER(upopt, TCH_ ## tim ## _UP)                   \
+                                        )                                                                   \
 }
 /**/
 
@@ -192,8 +196,8 @@
 // D(DMAx, Stream)
 // ch32h417 has DMAMUX that allow arbitrary assignment of peripherals to streams.
 #define DEF_TIM_DMA_FULL \
-    D(1, 1), D(1, 2), D(1, 3), D(1, 4), D(1, 5), D(1, 6), D(1, 7),D(1, 8), \
-    D(2, 1), D(2, 2), D(2, 3), D(2, 4), D(2, 5), D(2, 6), D(2, 7),D(2, 8)
+    D(1, 1), D(1, 2), D(1, 3), D(1, 4), D(1, 5), D(1, 6), D(1, 7), D(1, 8), \
+    D(2, 1), D(2, 2), D(2, 3), D(2, 4), D(2, 5), D(2, 6), D(2, 7), D(2, 8)
 
 #define DEF_TIM_DMA__BTCH_TIM1_CH1    DEF_TIM_DMA_FULL
 #define DEF_TIM_DMA__BTCH_TIM1_CH2    DEF_TIM_DMA_FULL
@@ -557,19 +561,19 @@
 #define DEF_TIM_AF__PB9__TCH_TIM10_CH4     D(1, 10)
 
 //TIM11 MUX  d(mux_id, timerid)
-#define DEF_TIM_AF__PD3__TCH_TIM11_CH1     D( 2, 11)
+#define DEF_TIM_AF__PD3__TCH_TIM11_CH1     D(2, 11)
 #define DEF_TIM_AF__PF6__TCH_TIM11_CH1     D(13, 11)
 #define DEF_TIM_AF__PE0__TCH_TIM11_CH1     D(13, 11)
 
-#define DEF_TIM_AF__PD4__TCH_TIM11_CH2     D( 2, 11)
+#define DEF_TIM_AF__PD4__TCH_TIM11_CH2     D(2, 11)
 #define DEF_TIM_AF__PF7__TCH_TIM11_CH2     D(13, 11)
 #define DEF_TIM_AF__PE1__TCH_TIM11_CH2     D(13, 11)
 
-#define DEF_TIM_AF__PD5__TCH_TIM11_CH3     D( 2, 11)
+#define DEF_TIM_AF__PD5__TCH_TIM11_CH3     D(2, 11)
 #define DEF_TIM_AF__PF8__TCH_TIM11_CH3     D(13, 11)
 #define DEF_TIM_AF__PD7__TCH_TIM11_CH3     D(13, 11)
 
-#define DEF_TIM_AF__PD6__TCH_TIM11_CH4     D( 2, 11)
+#define DEF_TIM_AF__PD6__TCH_TIM11_CH4     D(2, 11)
 #define DEF_TIM_AF__PF9__TCH_TIM11_CH4     D(13, 11)
 
 

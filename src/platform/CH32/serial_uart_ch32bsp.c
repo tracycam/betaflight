@@ -54,7 +54,7 @@ void uartReconfigure(uartPort_t *uartPort)
     USART_Cmd(USARTx, DISABLE);
     //init
     USART_InitStructure.USART_BaudRate = uartPort->port.baudRate;
-    
+
     // this does not seem to matter for rx but will give bad data on tx!
     if (uartPort->port.options & SERIAL_PARITY_EVEN) {
         USART_InitStructure.USART_WordLength = USART_WordLength_9b;
@@ -62,23 +62,28 @@ void uartReconfigure(uartPort_t *uartPort)
         USART_InitStructure.USART_WordLength = USART_WordLength_8b;
     }
 
-    USART_InitStructure.USART_StopBits = (uartPort->port.options & SERIAL_STOPBITS_2) ? USART_StopBits_2 : USART_StopBits_1;
-    USART_InitStructure.USART_Parity   = (uartPort->port.options & SERIAL_PARITY_EVEN) ? USART_Parity_Even : USART_Parity_No;
+    USART_InitStructure.USART_StopBits =
+        (uartPort->port.options & SERIAL_STOPBITS_2) ? USART_StopBits_2 : USART_StopBits_1;
+    USART_InitStructure.USART_Parity =
+        (uartPort->port.options & SERIAL_PARITY_EVEN) ? USART_Parity_Even : USART_Parity_No;
     USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
     USART_InitStructure.USART_Mode = 0;
-    if (uartPort->port.mode & MODE_RX)
+    if (uartPort->port.mode & MODE_RX) {
         USART_InitStructure.USART_Mode |= USART_Mode_Rx;
-    if (uartPort->port.mode & MODE_TX)
+    }
+    if (uartPort->port.mode & MODE_TX) {
         USART_InitStructure.USART_Mode |= USART_Mode_Tx;
+    }
 
     USART_Init(USARTx, &USART_InitStructure);
     // config external pin inverter (no internal pin inversion available)
     uartConfigureExternalPinInversion(uartPort);
 
-    if (uartPort->port.options & SERIAL_BIDIR)
+    if (uartPort->port.options & SERIAL_BIDIR) {
         USART_HalfDuplexCmd(USARTx, ENABLE);
-    else
+    } else{
         USART_HalfDuplexCmd(USARTx, DISABLE);
+    }
 
     USART_Cmd(USARTx, ENABLE);
 
@@ -86,13 +91,12 @@ void uartReconfigure(uartPort_t *uartPort)
     // Receive DMA or IRQ
     DMA_InitTypeDef DMA_InitStructure;
     if (uartPort->port.mode & MODE_RX) {
- #ifdef USE_DMA  
+ #ifdef USE_DMA
         if (uartPort->rxDMAResource) {
-
             DMA_StructInit(&DMA_InitStructure);
             DMA_InitStructure.DMA_Mode = DMA_Mode_Circular;
             DMA_InitStructure.DMA_PeripheralBaseAddr = uartPort->rxDMAPeripheralBaseAddr;
-            DMA_InitStructure.DMA_Priority  = DMA_Priority_Medium;
+            DMA_InitStructure.DMA_Priority = DMA_Priority_Medium;
             DMA_InitStructure.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
             DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_Byte;
             DMA_InitStructure.DMA_MemoryInc = DMA_MemoryInc_Enable;
@@ -107,8 +111,8 @@ void uartReconfigure(uartPort_t *uartPort)
             xDMA_Cmd(uartPort->rxDMAResource, ENABLE);
             USART_DMACmd(USARTx, USART_DMAReq_Rx, ENABLE);
             uartPort->rxDMAPos = xDMA_GetCurrDataCounter(uartPort->rxDMAResource);
-        } else 
- #endif       
+        } else
+ #endif
         {
             USART_ClearITPendingBit(USARTx, USART_IT_RXNE);
             USART_ITConfig(USARTx, USART_IT_RXNE, ENABLE);
@@ -118,7 +122,7 @@ void uartReconfigure(uartPort_t *uartPort)
 
     // Transmit DMA or IRQ
     if (uartPort->port.mode & MODE_TX) {
-  #ifdef USE_DMA      
+  #ifdef USE_DMA
         if (uartPort->txDMAResource) {
             DMA_StructInit(&DMA_InitStructure);
             DMA_InitStructure.DMA_Mode = DMA_Mode_Normal;
@@ -130,7 +134,7 @@ void uartReconfigure(uartPort_t *uartPort)
             DMA_InitStructure.DMA_MemoryDataSize = DMA_MemoryDataSize_Byte;
             DMA_InitStructure.DMA_BufferSize = uartPort->port.txBufferSize;
             DMA_InitStructure.DMA_M2M = DMA_M2M_Disable;
-            DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralDST;     
+            DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralDST;
             DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)uartPort->port.txBuffer;
 
             xDMA_DeInit(uartPort->txDMAResource);
@@ -138,16 +142,15 @@ void uartReconfigure(uartPort_t *uartPort)
             xDMA_ITConfig(uartPort->txDMAResource, DMA_IT_TC, ENABLE);
             xDMA_SetCurrDataCounter(uartPort->txDMAResource, 0);
             USART_DMACmd(USARTx, USART_DMAReq_Tx, ENABLE);
-
-        } else 
-  #endif      
+        } else
+  #endif
         {
             USART_ITConfig(USARTx, USART_IT_TXE, ENABLE);
         }
-       USART_ITConfig(USARTx, USART_IT_TC, ENABLE);
+        USART_ITConfig(USARTx, USART_IT_TC, ENABLE);
     }
     // TODO: usart_enable is called twice
-   USART_Cmd(USARTx, ENABLE); 
+    USART_Cmd(USARTx, ENABLE);
 }
 
 bool checkUsartTxOutput(uartPort_t *s)
@@ -197,7 +200,8 @@ void uartTryStartTxDMA(uartPort_t *s)
     // uartTryStartTxDMA must be protected, since it is called from
     // uartWrite and handleUsartTxDma (an ISR).
 
-    ATOMIC_BLOCK(NVIC_PRIO_SERIALUART_TXDMA) {
+    ATOMIC_BLOCK(NVIC_PRIO_SERIALUART_TXDMA)
+    {
         if (IS_DMA_ENABLED(s->txDMAResource)) {
             // DMA is already in progress
             return;
@@ -217,7 +221,7 @@ void uartTryStartTxDMA(uartPort_t *s)
         }
 
         // Start a new transaction.
-        ((DMA_ARCH_TYPE*)s->txDMAResource)->MADDR =(uint32_t)&s->port.txBuffer[s->port.txBufferTail];
+        ((DMA_ARCH_TYPE *)s->txDMAResource)->MADDR = (uint32_t)&s->port.txBuffer[s->port.txBufferTail];
 
         if (s->port.txBufferHead > s->port.txBufferTail) {
             xDMA_SetCurrDataCounter(s->txDMAResource, s->port.txBufferHead - s->port.txBufferTail);
@@ -228,7 +232,7 @@ void uartTryStartTxDMA(uartPort_t *s)
         }
         s->txDMAEmpty = false;
 
-    reenable:
+ reenable:
         USART_ClearFlag((USART_TypeDef *)s->USARTx, USART_FLAG_TC);
         ch32DmaBarrier();
         xDMA_Cmd(s->txDMAResource, ENABLE);
@@ -241,11 +245,10 @@ static void handleUsartTxDma(uartPort_t *s)
     uartTryStartTxDMA(s);
 }
 
-void uartDmaIrqHandler(dmaChannelDescriptor_t* descriptor)
+void uartDmaIrqHandler(dmaChannelDescriptor_t *descriptor)
 {
-    uartPort_t *s = &(((uartDevice_t*)(descriptor->userParam))->port);
-    if (DMA_GET_FLAG_STATUS(descriptor, DMA_IT_TCIF))
-    {
+    uartPort_t *s = &(((uartDevice_t *)(descriptor->userParam))->port);
+    if (DMA_GET_FLAG_STATUS(descriptor, DMA_IT_TCIF)) {
         DMA_CLEAR_FLAG(descriptor, DMA_IT_TCIF);
         DMA_CLEAR_FLAG(descriptor, DMA_IT_HTIF);
         xDMA_Cmd(s->txDMAResource, DISABLE);
@@ -253,10 +256,9 @@ void uartDmaIrqHandler(dmaChannelDescriptor_t* descriptor)
         handleUsartTxDma(s);
     }
 
-    if (DMA_GET_FLAG_STATUS(descriptor, DMA_IT_TEIF))
-    {
+    if (DMA_GET_FLAG_STATUS(descriptor, DMA_IT_TEIF)) {
         DMA_CLEAR_FLAG(descriptor, DMA_IT_TEIF);
-    } 
+    }
 }
 
 FAST_IRQ_HANDLER void uartIrqHandler(uartPort_t *s)
@@ -283,7 +285,7 @@ FAST_IRQ_HANDLER void uartIrqHandler(uartPort_t *s)
     }
 
     if (!s->txDMAResource && (USART_GetFlagStatus(USARTx, USART_FLAG_TXE) == SET)) {
-        if (s->port.txBufferTail != s->port.txBufferHead) { 
+        if (s->port.txBufferTail != s->port.txBufferHead) {
             USART_SendData(USARTx, s->port.txBuffer[s->port.txBufferTail]);
             s->port.txBufferTail = (s->port.txBufferTail + 1) % s->port.txBufferSize;
         } else {
@@ -293,16 +295,16 @@ FAST_IRQ_HANDLER void uartIrqHandler(uartPort_t *s)
 
     if (USART_GetFlagStatus(USARTx, USART_FLAG_ORE) == SET) {
         USART_ClearFlag(USARTx, USART_FLAG_ORE); //clear by read DATAR?
-        (void) USARTx->STATR;
-        (void) USARTx->DATAR;
+        (void)USARTx->STATR;
+        (void)USARTx->DATAR;
     }
 
     if (USART_GetFlagStatus(USARTx, USART_FLAG_IDLE) == SET) {
         if (s->port.idleCallback) {
             s->port.idleCallback();
         }
-        (void) USARTx->STATR;
-        (void) USARTx->DATAR;
+        (void)USARTx->STATR;
+        (void)USARTx->DATAR;
     }
 }
 #endif // USE_UART

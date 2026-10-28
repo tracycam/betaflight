@@ -78,8 +78,8 @@ bool ws2811LedStripHardwareInit(void)
         return false;
     }
 
-    TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
-    TIM_OCInitTypeDef  TIM_OCInitStructure;
+    TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
+    TIM_OCInitTypeDef TIM_OCInitStructure;
     DMA_InitTypeDef DMA_InitStructure;
 
     const timerHardware_t *timerHardware = timerAllocate(ledStripIoTag, OWNER_LED_STRIP, 0);
@@ -101,7 +101,6 @@ bool ws2811LedStripHardwareInit(void)
 
 #else
     dmaRef = timerHardware->dmaRef;
-
 #endif
 
     if (dmaRef == NULL || !dmaAllocate(dmaGetIdentifier(dmaRef), OWNER_LED_STRIP, 0)) {
@@ -111,7 +110,8 @@ bool ws2811LedStripHardwareInit(void)
     ws2811IO = IOGetByTag(ledStripIoTag);
     IOInit(ws2811IO, OWNER_LED_STRIP, 0);
 
-    IOConfigGPIOAF(ws2811IO, IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_UP), timerHardware->alternateFunction);
+    IOConfigGPIOAF(ws2811IO, IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH,
+                                       GPIO_PULL_UP), timerHardware->alternateFunction);
 
     RCC_ClockCmd(timerRCC(timerHardware->tim), ENABLE);
 
@@ -140,11 +140,13 @@ bool ws2811LedStripHardwareInit(void)
     if (timerHardware->output & TIMER_OUTPUT_N_CHANNEL) {
         TIM_OCInitStructure.TIM_OutputNState = TIM_OutputNState_Enable;
         TIM_OCInitStructure.TIM_OCNIdleState = TIM_OCNIdleState_Reset;
-        TIM_OCInitStructure.TIM_OCNPolarity =  (timerHardware->output & TIMER_OUTPUT_INVERTED) ? TIM_OCNPolarity_Low : TIM_OCNPolarity_High;
+        TIM_OCInitStructure.TIM_OCNPolarity =
+            (timerHardware->output & TIMER_OUTPUT_INVERTED) ? TIM_OCNPolarity_Low : TIM_OCNPolarity_High;
     } else {
         TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
         TIM_OCInitStructure.TIM_OCIdleState = TIM_OCIdleState_Set;
-        TIM_OCInitStructure.TIM_OCPolarity =  (timerHardware->output & TIMER_OUTPUT_INVERTED) ? TIM_OCPolarity_Low : TIM_OCPolarity_High;
+        TIM_OCInitStructure.TIM_OCPolarity =
+            (timerHardware->output & TIMER_OUTPUT_INVERTED) ? TIM_OCPolarity_Low : TIM_OCPolarity_High;
     }
 
     TIM_OCInitStructure.TIM_Pulse = 0;

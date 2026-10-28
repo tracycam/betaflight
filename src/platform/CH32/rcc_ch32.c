@@ -37,7 +37,7 @@ void RCC_ClockCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
         SET_BIT(RCC->bus ## PCENR ## suffix, enbit);            \
         tmpreg = READ_BIT(RCC->bus ## PCENR ## suffix, enbit);  \
         UNUSED(tmpreg);                                      \
-    } while(0)
+} while (0)
 
 #define __RCC_CLK_DISABLE(bus, suffix, enbit) (RCC->bus ## PCENR ## suffix &= ~(enbit))
 
@@ -49,15 +49,15 @@ void RCC_ClockCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
     }
 
     switch (tag) {
-        case RCC_HB:
-            __RCC_CLK(HB, NOSUFFIX, mask, NewState);
-            break;
-        case RCC_HB2:
-            __RCC_CLK(HB2, NOSUFFIX, mask, NewState);
-            break;
-        case RCC_HB1:
-            __RCC_CLK(HB1, NOSUFFIX, mask, NewState);
-            break;
+    case RCC_HB:
+        __RCC_CLK(HB, NOSUFFIX, mask, NewState);
+        break;
+    case RCC_HB2:
+        __RCC_CLK(HB2, NOSUFFIX, mask, NewState);
+        break;
+    case RCC_HB1:
+        __RCC_CLK(HB1, NOSUFFIX, mask, NewState);
+        break;
         // case RCC_APB1:
         //     __RCC_CLK(apb1, NOSUFFIX, mask, NewState);
         //     break;
@@ -82,17 +82,17 @@ void RCC_ResetCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
     }
 
     switch (tag) {
-        case RCC_HB:
-            __RCC_RESET(HB, NOSUFFIX, mask, NewState);
-            break;
+    case RCC_HB:
+        __RCC_RESET(HB, NOSUFFIX, mask, NewState);
+        break;
 
-        case RCC_HB2:
-            __RCC_RESET(HB2, NOSUFFIX, mask, NewState);
-            break;
+    case RCC_HB2:
+        __RCC_RESET(HB2, NOSUFFIX, mask, NewState);
+        break;
 
-        case RCC_HB1:
-            __RCC_RESET(HB1, NOSUFFIX, mask, NewState);
-            break;
+    case RCC_HB1:
+        __RCC_RESET(HB1, NOSUFFIX, mask, NewState);
+        break;
         // case RCC_APB1:
         //     __RCC_RESET(apb1, NOSUFFIX, mask, NewState);
         //     break;

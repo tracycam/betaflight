@@ -67,16 +67,15 @@ void cameraControlSoftwarePwmInit(void)
     //     TIM7_IRQn, NVIC_PRIORITY_BASE(NVIC_PRIO_TIMER), NVIC_PRIORITY_SUB(NVIC_PRIO_TIMER), ENABLE
     // };
     // NVIC_Init(&nvicTIM7);
-    NVIC_SetPriority(TIM6_IRQn,NVIC_PRIO_TIMER);
+    NVIC_SetPriority(TIM6_IRQn, NVIC_PRIO_TIMER);
     NVIC_EnableIRQ(TIM6_IRQn);
-    NVIC_SetPriority(TIM7_IRQn,NVIC_PRIO_TIMER);
+    NVIC_SetPriority(TIM7_IRQn, NVIC_PRIO_TIMER);
     NVIC_EnableIRQ(TIM7_IRQn);
 
 
     RCC->HB1ENR |= RCC_HB1Periph_TIM6 | RCC_HB1Periph_TIM7;
     TIM6->PSC = 0;
     TIM7->PSC = 0;
-
 }
 
 void cameraControlSoftwarePwmEnable(uint32_t hiTime, uint32_t period)
@@ -88,7 +87,8 @@ void cameraControlSoftwarePwmEnable(uint32_t hiTime, uint32_t period)
     TIM7->ATRLR = period;
 
     // Start two timers as simultaneously as possible
-    ATOMIC_BLOCK(NVIC_PRIO_TIMER) {
+    ATOMIC_BLOCK(NVIC_PRIO_TIMER)
+    {
         TIM6->CTLR1 = TIM_CEN;
         TIM7->CTLR1 = TIM_CEN;
     }
@@ -106,5 +106,4 @@ void cameraControlSoftwarePwmDisable(void)
     TIM7->DIER = 0;
 }
 #endif
-
 #endif // USE_CAMERA_CONTROL

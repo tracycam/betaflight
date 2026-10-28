@@ -52,9 +52,10 @@ typedef struct dmaTimerMapping_s {
 
 #define REQMAP_SGL(periph) { DMA_PERIPH_ ## periph, 0, DMA_REQUEST_ ## periph }
 #define REQMAP(periph, device) { DMA_PERIPH_ ## periph, periph ## DEV_ ## device, DMA_REQUEST_ ## periph ## device }
-#define REQMAP_DIR(periph, device, dir) { DMA_PERIPH_ ## periph ## _ ## dir, periph ## DEV_ ## device, DMA_REQUEST_ ## periph ## device ## _ ## dir }
+#define REQMAP_DIR(periph, device, dir) { DMA_PERIPH_ ## periph ## _ ## dir, periph ## DEV_ ## device, \
+                                          DMA_REQUEST_ ## periph ## device ## _ ## dir }
 // #define REQMAP_TIMUP(periph, timno) { DMA_PERIPH_TIMUP, timno - 1, DMAMUX_DMAREQ_ID_ ## TIM ## timno ## _UP }
-#define REQMAP_TIMUP(periph, timno) { DMA_PERIPH_TIMUP, TIMER_INDEX(timno), DMAMUX_DMAREQ_ID_ ## TIM ## timno ## _UP } 
+#define REQMAP_TIMUP(periph, timno) { DMA_PERIPH_TIMUP, TIMER_INDEX(timno), DMAMUX_DMAREQ_ID_ ## TIM ## timno ## _UP }
 
 #define DMA_REQUEST_UART1_RX DMAMUX_DMAREQ_ID_USART1_RX
 #define DMA_REQUEST_UART1_TX DMAMUX_DMAREQ_ID_USART1_TX
@@ -196,7 +197,7 @@ static const dmaTimerMapping_t dmaTimerMapping[] = {
 #undef TC
 #undef REQMAP_TIM
 
-#define DMA(d, c) { DMA_CODE(d, c, 0), (dmaResource_t *) DMA ## d ## _Channel ## c , 0 }
+#define DMA(d, c) { DMA_CODE(d, c, 0), (dmaResource_t *)DMA ## d ## _Channel ## c, 0 }
 
 static dmaChannelSpec_t dmaChannelSpec[MAX_PERIPHERAL_DMA_OPTIONS] = {
     DMA(1, 1),
@@ -214,7 +215,7 @@ static dmaChannelSpec_t dmaChannelSpec[MAX_PERIPHERAL_DMA_OPTIONS] = {
     DMA(2, 5),
     DMA(2, 6),
     DMA(2, 7),
-    DMA(2, 8),    
+    DMA(2, 8),
 };
 
 #undef DMA
@@ -237,7 +238,7 @@ const dmaChannelSpec_t *dmaGetChannelSpecByPeripheral(dmaPeripheral_e device, ui
         return NULL;
     }
 #endif
-    for (unsigned i = 0 ; i < ARRAYLEN(dmaPeripheralMapping) ; i++) {
+    for (unsigned i = 0; i < ARRAYLEN(dmaPeripheralMapping); i++) {
         const dmaPeripheralMapping_t *periph = &dmaPeripheralMapping[i];
         if (periph->device == device && periph->index == index) {
             dmaChannelSpec_t *dmaSpec = &dmaChannelSpec[opt];
@@ -271,11 +272,12 @@ const dmaChannelSpec_t *dmaGetChannelSpecByTimerValue(timerResource_t *tim, uint
     }
 
 #if defined(USE_THEIA_OSD)
-    if (dmaopt == 13 || tim == (timerResource_t *)TIM2 || tim == (timerResource_t *)TIM10 || tim == (timerResource_t *)TIM11 || tim == (timerResource_t *)TIM12) {
+    if (dmaopt == 13 || tim == (timerResource_t *)TIM2 || tim == (timerResource_t *)TIM10 ||
+        tim == (timerResource_t *)TIM11 || tim == (timerResource_t *)TIM12) {
         return NULL;
     }
 #endif
-    for (unsigned i = 0 ; i < ARRAYLEN(dmaTimerMapping) ; i++) {
+    for (unsigned i = 0; i < ARRAYLEN(dmaTimerMapping); i++) {
         const dmaTimerMapping_t *timerMapping = &dmaTimerMapping[i];
         if (timerMapping->tim == tim && timerMapping->channel == channel) {
             dmaChannelSpec_t *dmaSpec = &dmaChannelSpec[dmaopt];
@@ -302,7 +304,7 @@ dmaoptValue_t dmaGetOptionByTimer(const timerHardware_t *timer)
 {
     for (unsigned opt = 0; opt < ARRAYLEN(dmaChannelSpec); opt++) {
         if (timer->dmaRefConfigured == dmaChannelSpec[opt].ref) {
-                return (dmaoptValue_t)opt;
+            return (dmaoptValue_t)opt;
         }
     }
 
@@ -314,11 +316,10 @@ dmaoptValue_t dmaGetUpOptionByTimer(const timerHardware_t *timer)
 {
     for (unsigned opt = 0; opt < ARRAYLEN(dmaChannelSpec); opt++) {
         if (timer->dmaTimUPRef == dmaChannelSpec[opt].ref) {
-                return (dmaoptValue_t)opt;
+            return (dmaoptValue_t)opt;
         }
     }
 
     return DMA_OPT_UNUSED;
 }
-
 #endif // USE_DMA_SPEC

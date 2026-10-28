@@ -81,11 +81,11 @@ void spiInitDevice(spiDevice_e device)
     RCC_ClockCmd(spi->rcc, ENABLE);
     RCC_ResetCmd(spi->rcc, ENABLE);
 
-    IOInit(IOGetByTag(spi->sck),  OWNER_SPI_SCK,  RESOURCE_INDEX(device));
+    IOInit(IOGetByTag(spi->sck), OWNER_SPI_SCK, RESOURCE_INDEX(device));
     IOInit(IOGetByTag(spi->miso), OWNER_SPI_SDI, RESOURCE_INDEX(device));
     IOInit(IOGetByTag(spi->mosi), OWNER_SPI_SDO, RESOURCE_INDEX(device));
 
-    IOConfigGPIOAF(IOGetByTag(spi->sck),  SPI_IO_AF_SCK_CFG, spi->sckAF);
+    IOConfigGPIOAF(IOGetByTag(spi->sck), SPI_IO_AF_SCK_CFG, spi->sckAF);
     IOConfigGPIOAF(IOGetByTag(spi->miso), SPI_IO_AF_SDI_CFG, spi->misoAF);
     IOConfigGPIOAF(IOGetByTag(spi->mosi), SPI_IO_AF_CFG, spi->mosiAF);
 
@@ -100,7 +100,7 @@ void spiInitDevice(spiDevice_e device)
 
 void spiInternalResetDescriptors(busDevice_t *bus)
 {
-     SPI_TypeDef *instance = (SPI_TypeDef *)bus->busType_u.spi.instance;
+    SPI_TypeDef *instance = (SPI_TypeDef *)bus->busType_u.spi.instance;
     DMA_InitTypeDef *dmaInitTx = bus->dmaInitTx;
 
     //init default TX DMA
@@ -138,22 +138,27 @@ void spiInternalResetStream(dmaChannelDescriptor_t *descriptor)
 
     // Disable the stream
     streamRegs->CFGR = 0U;
-    xDMA_Cmd(streamRegs, DISABLE);        
+    xDMA_Cmd(streamRegs, DISABLE);
     // Clear any pending interrupt flags
     DMA_CLEAR_FLAG(descriptor, DMA_IT_HTIF | DMA_IT_TEIF | DMA_IT_TCIF);
 }
 
-FAST_CODE bool spiInternalReadWriteBufPolled(spiResource_t *spiInstance, const uint8_t *txData, uint8_t *rxData, int len)
+FAST_CODE bool spiInternalReadWriteBufPolled(spiResource_t *spiInstance, const uint8_t *txData, uint8_t *rxData,
+                                             int len)
 {
     SPI_TypeDef *instance = (SPI_TypeDef *)spiInstance;
     uint8_t b;
 
     while (len--) {
         b = txData ? *(txData++) : 0xFF;
-        while (SPI_I2S_GetFlagStatus(instance, SPI_I2S_FLAG_TXE) == RESET);
+        while (SPI_I2S_GetFlagStatus(instance, SPI_I2S_FLAG_TXE) == RESET) {
+            ;
+        }
         SPI_I2S_SendData(instance, b);
 
-        while (SPI_I2S_GetFlagStatus(instance, SPI_I2S_FLAG_RXNE) == RESET);
+        while (SPI_I2S_GetFlagStatus(instance, SPI_I2S_FLAG_RXNE) == RESET) {
+            ;
+        }
         b = SPI_I2S_ReceiveData(instance);
         if (rxData) {
             *(rxData++) = b;
@@ -222,7 +227,7 @@ void spiInternalStartDMA(const extDevice_t *dev)
     dmaChannelDescriptor_t *dmaTx = dev->bus->dmaTx;
     dmaChannelDescriptor_t *dmaRx = dev->bus->dmaRx;
     DMA_ARCH_TYPE *streamRegsTx = (DMA_ARCH_TYPE *)dmaTx->ref;
-    
+
     // Wait for any ongoing transmission to complete
     // while (SPI_I2S_GetFlagStatus(dev->bus->busType_u.spi.instance, SPI_I2S_FLAG_BSY) == SET);
 
@@ -295,7 +300,7 @@ void spiInternalStartDMA(const extDevice_t *dev)
     }
 }
 
-void spiInternalStopDMA (const extDevice_t *dev)
+void spiInternalStopDMA(const extDevice_t *dev)
 {
     dmaChannelDescriptor_t *dmaTx = dev->bus->dmaTx;
     dmaChannelDescriptor_t *dmaRx = dev->bus->dmaRx;
@@ -315,7 +320,9 @@ void spiInternalStopDMA (const extDevice_t *dev)
         SPI_I2S_DMACmd(instance, SPI_I2S_DMAReq_Tx | SPI_I2S_DMAReq_Rx, DISABLE);
     } else {
         // Ensure the current transmission is complete
-        while (SPI_I2S_GetFlagStatus(instance, SPI_I2S_FLAG_BSY));
+        while (SPI_I2S_GetFlagStatus(instance, SPI_I2S_FLAG_BSY)) {
+            ;
+        }
 
         // Drain the RX buffer
         while (SPI_I2S_GetFlagStatus(instance, SPI_I2S_FLAG_RXNE)) {
@@ -356,8 +363,7 @@ void spiSequenceStart(const extDevice_t *dev)
         // Apply setting
         if (dev->busType_u.spi.leadingEdge) {
             instance->CTLR1 |= SPI_CPOL_Low | SPI_CPHA_1Edge;
-        } else
-        {
+        } else{
             instance->CTLR1 |= SPI_CPOL_High | SPI_CPHA_2Edge;
         }
         bus->busType_u.spi.leadingEdge = dev->busType_u.spi.leadingEdge;
@@ -366,8 +372,7 @@ void spiSequenceStart(const extDevice_t *dev)
     SPI_Cmd(instance, ENABLE);
 
     // Check that any there are no attempts to DMA to/from CCD SRAM
-    for (busSegment_t *checkSegment = (busSegment_t *)bus->curSegment; checkSegment->len; checkSegment++) 
-    {
+    for (busSegment_t *checkSegment = (busSegment_t *)bus->curSegment; checkSegment->len; checkSegment++) {
         // Note that these counts are only valid if dmaSafe is true
         segmentCount++;
         xferLen += checkSegment->len;

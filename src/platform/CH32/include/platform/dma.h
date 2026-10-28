@@ -85,26 +85,26 @@ uint32_t dmaGetChannel(const uint8_t channel);
 #define DMA_INPUT_STRING "DMA%d_CH%d"
 
 #define DEFINE_DMA_CHANNEL(d, c, f)                                            \
-  {.dma = d,                                                                   \
-   .ref = (dmaResource_t *)d##_Channel##c##_BASE,                              \
-   .irqHandlerCallback = NULL,                                                 \
-   .flagsShift = f,                                                            \
-   .irqN = d##_Channel##c##_IRQn,                                              \
-   .userParam = 0,                                                             \
-   .resourceOwner.owner = 0,                                                   \
-   .resourceOwner.index = 0,                                                   \
-   .dmamux = (dmamux_channel_type *)d##MUX_CHANNEL##c}
+    { .dma = d,                                                                   \
+      .ref = (dmaResource_t *)d ## _Channel ## c ## _BASE,                              \
+      .irqHandlerCallback = NULL,                                                 \
+      .flagsShift = f,                                                            \
+      .irqN = d ## _Channel ## c ## _IRQn,                                              \
+      .userParam = 0,                                                             \
+      .resourceOwner.owner = 0,                                                   \
+      .resourceOwner.index = 0,                                                   \
+      .dmamux = (dmamux_channel_type *)d ## MUX_CHANNEL ## c }
 
 #define DMA_HANDLER_CODE __attribute__((interrupt("WCH-Interrupt-fast")))
 
 #define DEFINE_DMA_IRQ_HANDLER(d, c, i)                                        \
-  DMA_HANDLER_CODE void DMA##d##_Channel##c##_IRQHandler(void) {               \
-    const uint8_t index = DMA_IDENTIFIER_TO_INDEX(i);                          \
-    dmaCallbackHandlerFuncPtr handler =                                        \
-        dmaDescriptors[index].irqHandlerCallback;                              \
-    if (handler)                                                               \
-      handler(&dmaDescriptors[index]);                                         \
-  }
+    DMA_HANDLER_CODE void DMA ## d ## _Channel ## c ## _IRQHandler(void) {               \
+        const uint8_t index = DMA_IDENTIFIER_TO_INDEX(i);                          \
+        dmaCallbackHandlerFuncPtr handler =                                        \
+            dmaDescriptors[index].irqHandlerCallback;                              \
+        if (handler) {                                                               \
+            handler(&dmaDescriptors[index]); }                                         \
+    }
 
 #define DMA_CLEAR_FLAG(d, flag)  ((DMA_TypeDef *)(d)->dma)->INTFCR = (flag << d->flagsShift)
 #define DMA_GET_FLAG_STATUS(d, flag) (((DMA_TypeDef *)(d)->dma)->INTFR & (flag << d->flagsShift))
@@ -115,20 +115,20 @@ uint32_t dmaGetChannel(const uint8_t channel);
 
 
 #define xDMA_Init(dmaResource, initStruct)                                     \
-  DMA_Init((DMA_ARCH_TYPE *)(dmaResource), initStruct)
+    DMA_Init((DMA_ARCH_TYPE *)(dmaResource), initStruct)
 #define xDMA_DeInit(dmaResource) DMA_DeInit((DMA_ARCH_TYPE *)(dmaResource))
 #define xDMA_Cmd(dmaResource, newState)                                        \
-  DMA_Cmd((DMA_ARCH_TYPE *)(dmaResource), newState)
+    DMA_Cmd((DMA_ARCH_TYPE *)(dmaResource), newState)
 #define xDMA_ITConfig(dmaResource, flags, newState)                            \
-  DMA_ITConfig((DMA_ARCH_TYPE *)(dmaResource), flags, newState)
+    DMA_ITConfig((DMA_ARCH_TYPE *)(dmaResource), flags, newState)
 #define xDMA_GetCurrDataCounter(dmaResource)                                   \
-  DMA_GetCurrDataCounter((DMA_ARCH_TYPE *)(dmaResource))
+    DMA_GetCurrDataCounter((DMA_ARCH_TYPE *)(dmaResource))
 #define xDMA_SetCurrDataCounter(dmaResource, count)                            \
-  DMA_SetCurrDataCounter((DMA_ARCH_TYPE *)(dmaResource), count)
+    DMA_SetCurrDataCounter((DMA_ARCH_TYPE *)(dmaResource), count)
 #define xDMA_GetFlagStatus(dmaResource, flags)                                 \
-  DMA_GetFlagStatus((DMA_ARCH_TYPE *)(dmaResource), flags)
+    DMA_GetFlagStatus((DMA_ARCH_TYPE *)(dmaResource), flags)
 #define xDMA_ClearFlag(dmaResource, flags)                                     \
-  DMA_ClearFlag((DMA_ARCH_TYPE *)(dmaResource), flags)
+    DMA_ClearFlag((DMA_ARCH_TYPE *)(dmaResource), flags)
 
 #define DMA_CCR_EN 1U
 #define IS_DMA_ENABLED(reg) (((DMA_ARCH_TYPE *)(reg))->CFGR & DMA_CCR_EN)

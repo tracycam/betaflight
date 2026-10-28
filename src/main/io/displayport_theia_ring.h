@@ -22,7 +22,7 @@ void theiaProducerInit(theiaProducer_t *p, const theiaMailbox_t *mailbox);
 bool theiaProducerReady(const theiaProducer_t *p);
 void theiaProducerClear(theiaProducer_t *p);
 void theiaProducerWrite(theiaProducer_t *p, unsigned col, unsigned row,
-    uint8_t attr, const uint8_t *text, unsigned length);
+                        uint8_t attr, const uint8_t *text, unsigned length);
 bool theiaProducerDraw(theiaProducer_t *p);
 bool theiaProducerHeartbeat(theiaProducer_t *p);
 bool theiaProducerRelease(theiaProducer_t *p);

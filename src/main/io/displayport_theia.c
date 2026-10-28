@@ -48,15 +48,21 @@ static bool drawScreen(displayPort_t *port)
     bool sent = theiaProducerDraw(&producer);
     return theiaProducerReady(&producer) && !sent;
 }
-static void commit(displayPort_t *port) { (void)drawScreen(port); }
-static int screenSize(const displayPort_t *port) { return port->cols * port->rows; }
+static void commit(displayPort_t *port)
+{
+    (void)drawScreen(port);
+}
+static int screenSize(const displayPort_t *port)
+{
+    return port->cols * port->rows;
+}
 static int writeString(displayPort_t *port, uint8_t col, uint8_t row, uint8_t attr, const char *text)
 {
     (void)port;
     /* Severity font banks are deliberately ignored, matching the shipped
      * H415 BF profile. Blink is an explicit ABI-v4 improvement. */
     theiaProducerWrite(&producer, col, row, (attr & DISPLAYPORT_BLINK) ? 0x40 : 0,
-        (const uint8_t *)text, strlen(text));
+                       (const uint8_t *)text, strlen(text));
     return 0;
 }
 static int writeChar(displayPort_t *port, uint8_t col, uint8_t row, uint8_t attr, uint8_t glyph)
@@ -69,10 +75,22 @@ static int writeSys(displayPort_t *port, uint8_t col, uint8_t row, displayPortSy
 {
     (void)port; (void)col; (void)row; (void)element; return 0;
 }
-static bool transfer(const displayPort_t *port) { (void)port; return false; }
-static bool synced(const displayPort_t *port) { (void)port; return !producer.dirty && !producer.staged; }
-static void redraw(displayPort_t *port) { producer.dirty = true; (void)drawScreen(port); }
-static uint32_t bytesFree(const displayPort_t *port) { (void)port; return theiaProducerBytesFree(&producer); }
+static bool transfer(const displayPort_t *port)
+{
+    (void)port; return false;
+}
+static bool synced(const displayPort_t *port)
+{
+    (void)port; return !producer.dirty && !producer.staged;
+}
+static void redraw(displayPort_t *port)
+{
+    producer.dirty = true; (void)drawScreen(port);
+}
+static uint32_t bytesFree(const displayPort_t *port)
+{
+    (void)port; return theiaProducerBytesFree(&producer);
+}
 static bool fontWrite(displayPort_t *port, uint16_t glyph, const osdCharacter_t *chr)
 {
     (void)port;
@@ -111,7 +129,9 @@ static const displayPortVTable_t vtable = {
 };
 displayPort_t *displayPortTheiaInit(void)
 {
-    if (initialized) return &display;
+    if (initialized) {
+        return &display;
+    }
     const theiaMailbox_t mailbox = {
         .ring = (volatile uint8_t *)H415C_SHRAM_DP_RING,
         .writePos = WORD(H415C_SHRAM_DP_WRITE_POS), .readPos = WORD(H415C_SHRAM_DP_READ_POS),

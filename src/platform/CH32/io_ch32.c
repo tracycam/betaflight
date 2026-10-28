@@ -56,7 +56,7 @@ bool IORead(IO_t io)
     if (!io) {
         return false;
     }
-    return (IO_GPIO(io)->INDR & IO_Pin(io));
+    return(IO_GPIO(io)->INDR & IO_Pin(io));
 }
 
 void IOWrite(IO_t io, bool hi)
@@ -64,7 +64,7 @@ void IOWrite(IO_t io, bool hi)
     if (!io) {
         return;
     }
-    IO_GPIO(io)->BSHR = IO_Pin(io) << (hi ? 0 : 16); 
+    IO_GPIO(io)->BSHR = IO_Pin(io) << (hi ? 0 : 16);
 }
 
 void IOHi(IO_t io)
@@ -97,10 +97,10 @@ void IOToggle(IO_t io)
     IO_GPIO(io)->BSHR = mask;
 }
 
-/* 
-    We expect that during the dshot input and output switching process, 
-    it will be as fast as possible. 
-*/
+/*
+    We expect that during the dshot input and output switching process,
+    it will be as fast as possible.
+ */
 __attribute__((optimize("Ofast")))
 void IOConfigGPIO(IO_t io, ioConfig_t cfg)
 {
@@ -114,31 +114,35 @@ void IOConfigGPIO(IO_t io, ioConfig_t cfg)
 
     GPIO_InitTypeDef init;
 
-//  bit 0   1      2   3      4    5       6  7  
-//  DIR[1:0]   MODE[1:0]   SPEED[1:0]   PD=0,PU=1  
+//  bit 0   1      2   3      4    5       6  7
+//  DIR[1:0]   MODE[1:0]   SPEED[1:0]   PD=0,PU=1
 // #define IO_CONFIG(dir, mode, speed, pupd) ((dir) | ((mode) << 2) | ((speed) << 4) | ((pupd) << 6))
     init.GPIO_Pin = IO_Pin(io);
     init.GPIO_Speed = (cfg >> 4) & 0x3;
 
-    if(cfg & 0x3) //output 
-    {
-        if(((cfg >> 2) & 0x3) == GPIO_MODE_OUT_PP) init.GPIO_Mode = GPIO_Mode_Out_PP;
-        else if(((cfg >> 2) & 0x3) == GPIO_MODE_OUT_OD) init.GPIO_Mode = GPIO_Mode_Out_OD;
-        else if(((cfg >> 2) & 0x3) == GPIO_MODE_OUT_AF_PP)  init.GPIO_Mode = GPIO_Mode_AF_PP;
-        else if(((cfg >> 2) & 0x3) == GPIO_MODE_OUT_AF_OD)  init.GPIO_Mode = GPIO_Mode_AF_OD;
-        else init.GPIO_Mode = GPIO_Mode_Out_PP;
-    }
-    else //input
-    { 
-        if(((cfg >> 2) & 0x3) == GPIO_MODE_IN_AN)  init.GPIO_Mode = GPIO_Mode_AIN;
-        else if(((cfg >> 2) & 0x3) == GPIO_MODE_IN_FLOAT) init.GPIO_Mode = GPIO_Mode_IN_FLOATING;
-        else if(((cfg >> 2) & 0x3) == GPIO_MODE_IN_PULL)
-        {
-             if(((cfg >> 6) & 0x3) == GPIO_PULL_DOWN) init.GPIO_Mode = GPIO_Mode_IPD;
-             else if(((cfg >> 6) & 0x3) == GPIO_PULL_UP) init.GPIO_Mode = GPIO_Mode_IPU;
-             else  init.GPIO_Mode = GPIO_Mode_IN_FLOATING;
-        }
-        else {
+    if (cfg & 0x3) { //output
+        if (((cfg >> 2) & 0x3) == GPIO_MODE_OUT_PP) {
+            init.GPIO_Mode = GPIO_Mode_Out_PP;
+        } else if (((cfg >> 2) & 0x3) == GPIO_MODE_OUT_OD) {
+            init.GPIO_Mode = GPIO_Mode_Out_OD;
+        } else if (((cfg >> 2) & 0x3) == GPIO_MODE_OUT_AF_PP) {
+            init.GPIO_Mode = GPIO_Mode_AF_PP;
+        } else if (((cfg >> 2) & 0x3) == GPIO_MODE_OUT_AF_OD) {
+            init.GPIO_Mode = GPIO_Mode_AF_OD;
+        } else { init.GPIO_Mode = GPIO_Mode_Out_PP; }
+    }else {  //input
+        if (((cfg >> 2) & 0x3) == GPIO_MODE_IN_AN) {
+            init.GPIO_Mode = GPIO_Mode_AIN;
+        } else if (((cfg >> 2) & 0x3) == GPIO_MODE_IN_FLOAT) {
+            init.GPIO_Mode = GPIO_Mode_IN_FLOATING;
+        } else if (((cfg >> 2) & 0x3) == GPIO_MODE_IN_PULL) {
+            if (((cfg >> 6) & 0x3) == GPIO_PULL_DOWN) {
+                init.GPIO_Mode = GPIO_Mode_IPD;
+            } else if (((cfg >> 6) & 0x3) == GPIO_PULL_UP) {
+                init.GPIO_Mode = GPIO_Mode_IPU;
+            } else {                                                                     init.GPIO_Mode =
+                                                                                             GPIO_Mode_IN_FLOATING; }
+        }else {
             return;
         }
     }

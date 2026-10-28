@@ -49,27 +49,29 @@ static void pwmOCConfig(void *tim, uint8_t channel, uint16_t value, uint8_t outp
     if (output & TIMER_OUTPUT_N_CHANNEL) {
         TIM_OCInitStructure.TIM_OutputNState = TIM_OutputNState_Enable;
         TIM_OCInitStructure.TIM_OCNIdleState = TIM_OCNIdleState_Reset;
-        TIM_OCInitStructure.TIM_OCNPolarity = (output & TIMER_OUTPUT_INVERTED) ? TIM_OCNPolarity_Low : TIM_OCNPolarity_High;
+        TIM_OCInitStructure.TIM_OCNPolarity =
+            (output & TIMER_OUTPUT_INVERTED) ? TIM_OCNPolarity_Low : TIM_OCNPolarity_High;
     } else {
         TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
         TIM_OCInitStructure.TIM_OCIdleState = TIM_OCIdleState_Set;
-        TIM_OCInitStructure.TIM_OCPolarity =  (output & TIMER_OUTPUT_INVERTED) ? TIM_OCPolarity_Low : TIM_OCPolarity_High;
+        TIM_OCInitStructure.TIM_OCPolarity =
+            (output & TIMER_OUTPUT_INVERTED) ? TIM_OCPolarity_Low : TIM_OCPolarity_High;
     }
     TIM_OCInitStructure.TIM_Pulse = value;
 
     timerOCInit((TIM_TypeDef *)tim, channel, &TIM_OCInitStructure);
     timerOCPreloadConfig((TIM_TypeDef *)tim, channel, TIM_OCPreload_Enable);
-
 }
 
-void pwmOutputConfig(timerChannel_t *channel, const timerHardware_t *timerHardware, uint32_t hz, uint16_t period, uint16_t value, uint8_t inversion)
+void pwmOutputConfig(timerChannel_t *channel, const timerHardware_t *timerHardware, uint32_t hz, uint16_t period,
+                     uint16_t value, uint8_t inversion)
 {
     timerReconfigureTimeBase(timerHardware, period, hz);
     pwmOCConfig(timerHardware->tim,
-        timerHardware->channel,
-        value,
-        inversion ? timerHardware->output ^ TIMER_OUTPUT_INVERTED : timerHardware->output
-        );
+                timerHardware->channel,
+                value,
+                inversion ? timerHardware->output ^ TIMER_OUTPUT_INVERTED : timerHardware->output
+                );
 
     TIM_CtrlPWMOutputs((TIM_TypeDef *)timerHardware->tim, ENABLE);
     TIM_Cmd((TIM_TypeDef *)timerHardware->tim, ENABLE);
@@ -178,7 +180,7 @@ bool motorPwmDevInit(motorDevice_t *device, const motorDevConfig_t *motorConfig,
         useContinuousUpdate = true;
         idlePulse = 0;
         break;
-    case MOTOR_PROTOCOL_PWM :
+    case MOTOR_PROTOCOL_PWM:
         sMin = 1e-3f;
         sLen = 1e-3f;
         useContinuousUpdate = true;
@@ -218,11 +220,13 @@ bool motorPwmDevInit(motorDevice_t *device, const motorDevConfig_t *motorConfig,
             if brushed then it is the entire length of the period.
             TODO: this can be moved back to periodMin and periodLen
             once mixer outputs a 0..1 float value.
-        */
-        pwmMotors[motorIndex].pulseScale = ((motorConfig->motorProtocol == MOTOR_PROTOCOL_BRUSHED) ? period : (sLen * hz)) / 1000.0f;
+         */
+        pwmMotors[motorIndex].pulseScale =
+            ((motorConfig->motorProtocol == MOTOR_PROTOCOL_BRUSHED) ? period : (sLen * hz)) / 1000.0f;
         pwmMotors[motorIndex].pulseOffset = (sMin * hz) - (pwmMotors[motorIndex].pulseScale * 1000);
 
-        pwmOutputConfig(&pwmMotors[motorIndex].channel, timerHardware, hz, period, idlePulse, motorConfig->motorInversion);
+        pwmOutputConfig(&pwmMotors[motorIndex].channel, timerHardware, hz, period, idlePulse,
+                        motorConfig->motorInversion);
 
         bool timerAlreadyUsed = false;
         for (int i = 0; i < motorIndex; i++) {
@@ -275,7 +279,8 @@ void servoDevInit(const servoDevConfig_t *servoConfig)
 
         IOConfigGPIOAF(servos[servoIndex].io, IOCFG_AF_PP, timer->alternateFunction);
 
-        pwmOutputConfig(&servos[servoIndex].channel, timer, PWM_TIMER_1MHZ, PWM_TIMER_1MHZ / servoConfig->servoPwmRate, servoConfig->servoCenterPulse, 0);
+        pwmOutputConfig(&servos[servoIndex].channel, timer, PWM_TIMER_1MHZ, PWM_TIMER_1MHZ / servoConfig->servoPwmRate,
+                        servoConfig->servoCenterPulse, 0);
         servos[servoIndex].enabled = true;
     }
 }

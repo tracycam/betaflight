@@ -43,7 +43,6 @@ void debugInit(void)
 
 dbgPin_t dbgPins[DEBUG_PIN_COUNT] = {
     { .tag = IO_TAG(DEBUG_PIN0) },
-    { .tag = IO_TAG(DEBUG_PIN1)},
+    { .tag = IO_TAG(DEBUG_PIN1) },
 };
-
 #endif

@@ -39,17 +39,17 @@
  * DMA descriptors.
  */
 dmaChannelDescriptor_t dmaDescriptors[DMA_LAST_HANDLER] = {
-    DEFINE_DMA_CHANNEL(DMA1, 1,  0),
-    DEFINE_DMA_CHANNEL(DMA1, 2,  4),
-    DEFINE_DMA_CHANNEL(DMA1, 3,  8),
+    DEFINE_DMA_CHANNEL(DMA1, 1, 0),
+    DEFINE_DMA_CHANNEL(DMA1, 2, 4),
+    DEFINE_DMA_CHANNEL(DMA1, 3, 8),
     DEFINE_DMA_CHANNEL(DMA1, 4, 12),
     DEFINE_DMA_CHANNEL(DMA1, 5, 16),
     DEFINE_DMA_CHANNEL(DMA1, 6, 20),
     DEFINE_DMA_CHANNEL(DMA1, 7, 24),
     DEFINE_DMA_CHANNEL(DMA1, 8, 28),
-    DEFINE_DMA_CHANNEL(DMA2, 1,  0),
-    DEFINE_DMA_CHANNEL(DMA2, 2,  4),
-    DEFINE_DMA_CHANNEL(DMA2, 3,  8),
+    DEFINE_DMA_CHANNEL(DMA2, 1, 0),
+    DEFINE_DMA_CHANNEL(DMA2, 2, 4),
+    DEFINE_DMA_CHANNEL(DMA2, 3, 8),
     DEFINE_DMA_CHANNEL(DMA2, 4, 12),
     DEFINE_DMA_CHANNEL(DMA2, 5, 16),
     DEFINE_DMA_CHANNEL(DMA2, 6, 20),
@@ -59,7 +59,7 @@ dmaChannelDescriptor_t dmaDescriptors[DMA_LAST_HANDLER] = {
 
 /*
  * DMA IRQ Handlers
- * if use hardware push&pop,key woard "WCH-Interrupt-fast" is needed 
+ * if use hardware push&pop,key woard "WCH-Interrupt-fast" is needed
  */
 __FAST_INTERRUPT DEFINE_DMA_IRQ_HANDLER(1, 1, DMA1_CH1_HANDLER)
 __FAST_INTERRUPT DEFINE_DMA_IRQ_HANDLER(1, 2, DMA1_CH2_HANDLER)
@@ -91,14 +91,15 @@ void dmaEnable(dmaIdentifier_e identifier)
     enableDmaClock(index);
 }
 
-void dmaMuxEnable(dmaIdentifier_e identifier, uint32_t  dmaMuxId)
+void dmaMuxEnable(dmaIdentifier_e identifier, uint32_t dmaMuxId)
 {
     const int index = DMA_IDENTIFIER_TO_INDEX(identifier);
     // dmamux_init(dmaDescriptors[index].dmamux, dmaMuxId);
     DMA_MuxChannelConfig(index, dmaMuxId);
 }
 
-void dmaSetHandler(dmaIdentifier_e identifier, dmaCallbackHandlerFuncPtr callback, uint32_t priority, uint32_t userParam)
+void dmaSetHandler(dmaIdentifier_e identifier, dmaCallbackHandlerFuncPtr callback, uint32_t priority,
+                   uint32_t userParam)
 {
     const int index = DMA_IDENTIFIER_TO_INDEX(identifier);
 
@@ -135,5 +136,4 @@ uint32_t dmaGetDataLength(dmaResource_t *ref)
 {
     return DMA_GetCurrDataCounter((DMA_ARCH_TYPE *)ref);
 }
-
 #endif

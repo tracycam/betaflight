@@ -69,7 +69,7 @@
 #define MSC_OUT_EP 0x01
 
 #define USBD_VID           0x1A86
-#define USBD_PID           0xFE10 
+#define USBD_PID           0xFE10
 #define USBD_MAX_POWER     100
 #define USBD_LANGID_STRING 1033
 
@@ -103,35 +103,35 @@ static const uint8_t device_quality_descriptor[] = {
 };
 
 static const char *string_descriptors[] = {
-    (const char[]){ 0x09, 0x04 },                   /* Langid */
+    (const char[]){0x09, 0x04 },                    /* Langid */
     "Betaflight",                                   /* Manufacturer */
     "Betaflight FC Mass Storage (FS Mode)",         /* Product */
     "2025123456",                                   /* Serial Number */
-    "Betaflight CH32H415", 
+    "Betaflight CH32H415",
     "Betaflight CH32H415"
 };
 
 static const uint8_t *device_descriptor_callback(uint8_t speed)
 {
-    (void) speed;
+    (void)speed;
     return device_descriptor;
 }
 
 static const uint8_t *config_descriptor_callback(uint8_t speed)
 {
-    (void) speed;
+    (void)speed;
     return config_descriptor;
 }
 
 static const uint8_t *device_quality_descriptor_callback(uint8_t speed)
 {
-    (void) speed;
+    (void)speed;
     return device_quality_descriptor;
 }
 
 static const char *string_descriptor_callback(uint8_t speed, uint8_t index)
 {
-    (void) speed;    
+    (void)speed;
     if (index > 5) {
         return NULL;
     }
@@ -148,27 +148,27 @@ const struct usb_descriptor msc_ram_descriptor = {
 
 static void usbd_event_handler(uint8_t busid, uint8_t event)
 {
-    (void) busid;
+    (void)busid;
     switch (event) {
-        case USBD_EVENT_RESET:
-            break;
-        case USBD_EVENT_CONNECTED:
-            break;
-        case USBD_EVENT_DISCONNECTED:
-            break;
-        case USBD_EVENT_RESUME:
-            break;
-        case USBD_EVENT_SUSPEND:
-            break;
-        case USBD_EVENT_CONFIGURED:
-            break;
-        case USBD_EVENT_SET_REMOTE_WAKEUP:
-            break;
-        case USBD_EVENT_CLR_REMOTE_WAKEUP:
-            break;
+    case USBD_EVENT_RESET:
+        break;
+    case USBD_EVENT_CONNECTED:
+        break;
+    case USBD_EVENT_DISCONNECTED:
+        break;
+    case USBD_EVENT_RESUME:
+        break;
+    case USBD_EVENT_SUSPEND:
+        break;
+    case USBD_EVENT_CONFIGURED:
+        break;
+    case USBD_EVENT_SET_REMOTE_WAKEUP:
+        break;
+    case USBD_EVENT_CLR_REMOTE_WAKEUP:
+        break;
 
-        default:
-            break;
+    default:
+        break;
     }
 }
 
@@ -194,17 +194,15 @@ static void msc_usb_gpio_config(void)
 
 static void msc_usb_clk_config(void)
 {
-        //disable first
-        RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS, DISABLE);
-        RCC_UTMIcmd(DISABLE);
-        if((RCC->PLLCFGR & RCC_SYSPLL_SEL) != RCC_SYSPLL_USBHS)
-        {
-            RCC_USBHS_PLLCmd(DISABLE);
-        }
+    //disable first
+    RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS, DISABLE);
+    RCC_UTMIcmd(DISABLE);
+    if ((RCC->PLLCFGR & RCC_SYSPLL_SEL) != RCC_SYSPLL_USBHS) {
+        RCC_USBHS_PLLCmd(DISABLE);
+    }
 
 
-    if((RCC->PLLCFGR & RCC_SYSPLL_SEL) != RCC_SYSPLL_USBHS)
-    {
+    if ((RCC->PLLCFGR & RCC_SYSPLL_SEL) != RCC_SYSPLL_USBHS) {
         /* Initialize USBHS 480M PLL */
         RCC_USBHS_PLLCmd(DISABLE);
         RCC_USBHSPLLCLKConfig(RCC_USBHSPLLSource_HSE);
@@ -258,15 +256,15 @@ uint8_t mscStart(void)
     }
 
     //usb clk init
-    msc_usb_clk_config( ); 
+    msc_usb_clk_config( );
     usb_rxsof_handler = NULL;
     msc_ram_init(0, 0);
 
-    NVIC_SetPriority(USBHS_IRQn,NVIC_PRIO_USB) ;
+    NVIC_SetPriority(USBHS_IRQn, NVIC_PRIO_USB);
     NVIC_EnableIRQ(USBHS_IRQn);
 
     NVIC_DisableIRQ(SysTick1_IRQn);
-    asm("fence.i");
+    asm ("fence.i");
     NVIC_SetPriority(SysTick1_IRQn, 0);
     NVIC_EnableIRQ(SysTick1_IRQn);
 
@@ -296,7 +294,7 @@ int usbd_msc_sector_read(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *b
 
 int usbd_msc_sector_write(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length)
 {
-   (void)busid;
-   return  USBD_STORAGE_fops->Write(lun, buffer, sector, length / g_block_size);
+    (void)busid;
+    return USBD_STORAGE_fops->Write(lun, buffer, sector, length / g_block_size);
 }
 #endif
