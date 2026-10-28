@@ -48,6 +48,9 @@ typedef struct uartPort_s {
 
     usartResource_t *USARTx;
     bool txDMAEmpty;
+#if defined(USE_CHBSP_DRIVER)
+    bool txCompletePending;
+#endif
 
     bool (* checkUsartTxOutput)(struct uartPort_s *s);
 } uartPort_t;

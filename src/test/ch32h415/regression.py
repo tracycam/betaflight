@@ -26,11 +26,15 @@ def run(name,src,timeout=2):
   raise RuntimeError(f'{name}: failed with exit code {e.returncode}\n{e.stdout}{e.stderr}')
 
 pf='src/platform/CH32/include/platform/platform.h'
-run('pfic', 'static volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'+fn(pf,'__attribute__((always_inline)) static inline uint32_t __get_BASEPRI')+fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb')+'''
+run('pfic', 'static volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'+fn(pf,'__attribute__((always_inline)) static inline uint32_t __get_BASEPRI')+fn(pf,'__attribute__((always_inline)) static inline uint32_t ch32AtomicPriority')+fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb')+'''
 int main(void){
- threshold=0x50; __set_BASEPRI_MAX_nb(0x10); printf("outer 0x50, inner 0x10 -> 0x%02x (expected 0x10)\\n",threshold);
- threshold=0x10; __set_BASEPRI_MAX_nb(0x50); printf("outer 0x10, inner 0x50 -> 0x%02x (expected 0x10)\\n",threshold);
- return threshold!=0x10;
+ threshold=0; __set_BASEPRI_MAX_nb(0x50); if(threshold!=0x60) return 1;
+ threshold=0; __set_BASEPRI_MAX_nb(0x80); if(threshold!=0x90) return 1;
+ threshold=0; __set_BASEPRI_MAX_nb(0x00); if(threshold!=0x10) return 1;
+ threshold=0x50; __set_BASEPRI_MAX_nb(0x10); if(threshold!=0x20) return 1;
+ threshold=0x10; __set_BASEPRI_MAX_nb(0x50); if(threshold!=0x10) return 1;
+ puts("PFIC thresholds cover subpriority, zero and equal-boundary cases");
+ return 0;
 }
 ''')
 
@@ -192,7 +196,7 @@ typedef struct {int unused;} USART_TypeDef;
 #define IS_DMA_ENABLED(d) (((dma_t *)(d))->CFGR & 1)
 #define DMA_GET_FLAG_STATUS(d,f) ((d)->flags & (f))
 #define DMA_CLEAR_FLAG(d,f) ((d)->flags &= ~(f))
-typedef struct {void *USARTx;dma_t *txDMAResource;bool txDMAEmpty;struct{uint8_t txBuffer[8];unsigned txBufferHead,txBufferTail,txBufferSize;}port;} uartPort_t;
+typedef struct {void *USARTx;dma_t *txDMAResource;bool txDMAEmpty,txCompletePending;struct{uint8_t txBuffer[8];unsigned txBufferHead,txBufferTail,txBufferSize;}port;} uartPort_t;
 typedef struct {uartPort_t port;} uartDevice_t;
 typedef struct {uintptr_t userParam;uint32_t flags;} dmaChannelDescriptor_t;
 static unsigned xDMA_GetCurrDataCounter(dma_t *d){return d->CNTR;}
@@ -202,7 +206,7 @@ static void USART_ClearFlag(USART_TypeDef *u,int flag){(void)u;(void)flag;}
 static void ch32DmaBarrier(void){}
 static void uartTxMonitor(uartPort_t *p){}
 '''
-run('uart_tx_complete',pre+fn(uc,'void uartTryStartTxDMA(')+fn(uc,'static void handleUsartTxDma(')+fn(uc,'void uartDmaIrqHandler(')+'''
+run('uart_tx_complete',pre+fn(uc,'void uartTryStartTxDMA(')+fn(uc,'static void uartTxMonitorIfComplete')+fn(uc,'static void handleUsartTxDma(')+fn(uc,'void uartDmaIrqHandler(')+'''
 int main(void){dma_t reg={.CFGR=1,.CNTR=0};uartDevice_t d={.port={.txDMAResource=&reg,.port={.txBufferHead=3,.txBufferTail=1,.txBufferSize=8}}};dmaChannelDescriptor_t desc={.userParam=(uintptr_t)&d,.flags=DMA_IT_TCIF};uartDmaIrqHandler(&desc);printf("after TC: EN=%u CNTR=%u head=%u tail=%u (expected CNTR=2, tail=3)\\n",reg.CFGR,reg.CNTR,d.port.port.txBufferHead,d.port.port.txBufferTail);return reg.CNTR!=2;}
 ''')
 
@@ -363,10 +367,10 @@ pre='''
 #define SET 1
 #define RESET 0
 #define USART_IT_TXE USART_FLAG_TXE
-typedef struct {uint32_t CFGR;} dma_t;
+typedef struct {uint32_t CFGR,CNTR,MADDR;} dma_t;
 typedef struct {unsigned DATAR,STATR;} USART_TypeDef;
 #define IS_DMA_ENABLED(d) (((dma_t *)(d))->CFGR & 1)
-typedef struct {void *USARTx;dma_t *txDMAResource,*rxDMAResource;struct{uint8_t txBuffer[8];unsigned txBufferHead,txBufferTail,txBufferSize;uint8_t rxBuffer[8];unsigned rxBufferHead,rxBufferSize;void(*rxCallback)(uint32_t,void*);void*rxCallbackData;void(*idleCallback)(void);}port;} uartPort_t;
+typedef struct {void *USARTx;dma_t *txDMAResource,*rxDMAResource;bool txDMAEmpty,txCompletePending;struct{uint8_t txBuffer[8];unsigned txBufferHead,txBufferTail,txBufferSize;uint8_t rxBuffer[8];unsigned rxBufferHead,rxBufferSize;void(*rxCallback)(uint32_t,void*);void*rxCallbackData;void(*idleCallback)(void);}port;} uartPort_t;
 typedef struct {uartPort_t port;} uartDevice_t;
 static unsigned usartFlags,monitorCalls;
 static unsigned USART_GetFlagStatus(USART_TypeDef *u,int flag){(void)u;return usartFlags&flag;}
@@ -375,8 +379,27 @@ static void USART_ITConfig(USART_TypeDef *u,int flag,int state){(void)u;(void)fl
 static void USART_SendData(USART_TypeDef *u,int data){(void)u;(void)data;}
 static void uartTxMonitor(uartPort_t *p){(void)p;monitorCalls++;}
 '''
-run('uart_line_end_release',pre+fn('src/platform/CH32/serial_uart_ch32bsp.c','FAST_IRQ_HANDLER void uartIrqHandler')+'''
+run('uart_line_end_release',pre+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void uartTxMonitorIfComplete')+fn('src/platform/CH32/serial_uart_ch32bsp.c','FAST_IRQ_HANDLER void uartIrqHandler')+'''
 int main(void){USART_TypeDef usart={0};uartDevice_t d={.port={.USARTx=&usart,.txDMAResource=NULL,.rxDMAResource=NULL,.port={.txBufferHead=2,.txBufferTail=1,.txBufferSize=8}}};
  usartFlags=USART_FLAG_TC;uartIrqHandler(&d.port);if(monitorCalls)return 1;
  d.port.port.txBufferTail=d.port.port.txBufferHead;usartFlags=USART_FLAG_TC;uartIrqHandler(&d.port);return monitorCalls!=1;}
+''')
+
+pre += '''
+#define NVIC_PRIO_SERIALUART_TXDMA 0x50
+#define ATOMIC_BLOCK(x) for(int once=1;once;once=0)
+#define DMA_ARCH_TYPE dma_t
+#define DMA_GET_FLAG_STATUS(d,f) ((d)->flags & (f))
+#define DMA_CLEAR_FLAG(d,f) ((d)->flags &= ~(f))
+typedef struct {uintptr_t userParam;uint32_t flags;} dmaChannelDescriptor_t;
+static unsigned xDMA_GetCurrDataCounter(dma_t *d){return d->CNTR;}
+static void xDMA_SetCurrDataCounter(dma_t *d,unsigned n){d->CNTR=n;}
+static void xDMA_Cmd(dma_t *d,int enabled){d->CFGR=enabled;}
+static void ch32DmaBarrier(void){}
+'''
+run('uart_usart_before_dma',pre+fn('src/platform/CH32/serial_uart_ch32bsp.c','void uartTryStartTxDMA(')+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void uartTxMonitorIfComplete')+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void handleUsartTxDma(')+fn('src/platform/CH32/serial_uart_ch32bsp.c','void uartDmaIrqHandler(')+fn('src/platform/CH32/serial_uart_ch32bsp.c','FAST_IRQ_HANDLER void uartIrqHandler')+'''
+int main(void){USART_TypeDef usart={0};dma_t reg={.CFGR=1,.CNTR=0};uartDevice_t d={.port={.USARTx=&usart,.txDMAResource=&reg,.rxDMAResource=NULL,.port={.txBufferHead=2,.txBufferTail=2,.txBufferSize=8}}};
+ usartFlags=USART_FLAG_TC;uartIrqHandler(&d.port);if(monitorCalls||!d.port.txCompletePending)return 1;
+ dmaChannelDescriptor_t desc={.userParam=(uintptr_t)&d,.flags=DMA_IT_TCIF};uartDmaIrqHandler(&desc);
+ return reg.CFGR!=0||monitorCalls!=1||d.port.txCompletePending;}
 ''')

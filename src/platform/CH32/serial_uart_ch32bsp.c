@@ -233,6 +233,7 @@ void uartTryStartTxDMA(uartPort_t *s)
         s->txDMAEmpty = false;
 
  reenable:
+        s->txCompletePending = false;
         USART_ClearFlag((USART_TypeDef *)s->USARTx, USART_FLAG_TC);
         ch32DmaBarrier();
         xDMA_Cmd(s->txDMAResource, ENABLE);
@@ -240,9 +241,21 @@ void uartTryStartTxDMA(uartPort_t *s)
 }
 #endif
 
+static void uartTxMonitorIfComplete(uartPort_t *s)
+{
+    if (!s->txCompletePending || s->port.txBufferHead != s->port.txBufferTail) {
+        return;
+    }
+    if (!s->txDMAResource || !IS_DMA_ENABLED(s->txDMAResource)) {
+        s->txCompletePending = false;
+        uartTxMonitor(s);
+    }
+}
+
 static void handleUsartTxDma(uartPort_t *s)
 {
     uartTryStartTxDMA(s);
+    uartTxMonitorIfComplete(s);
 }
 
 void uartDmaIrqHandler(dmaChannelDescriptor_t *descriptor)
@@ -277,15 +290,13 @@ FAST_IRQ_HANDLER void uartIrqHandler(uartPort_t *s)
     if ((USART_GetFlagStatus(USARTx, USART_FLAG_TC) != RESET)) {
         USART_ClearFlag(USARTx, USART_FLAG_TC);
 
-        const bool fifoEmpty = s->port.txBufferHead == s->port.txBufferTail;
-        const bool dmaStopped = !s->txDMAResource || !IS_DMA_ENABLED(s->txDMAResource);
-        if (fifoEmpty && dmaStopped) {
-            uartTxMonitor(s);
-        }
+        s->txCompletePending = s->port.txBufferHead == s->port.txBufferTail;
+        uartTxMonitorIfComplete(s);
     }
 
     if (!s->txDMAResource && (USART_GetFlagStatus(USARTx, USART_FLAG_TXE) == SET)) {
         if (s->port.txBufferTail != s->port.txBufferHead) {
+            s->txCompletePending = false;
             USART_SendData(USARTx, s->port.txBuffer[s->port.txBufferTail]);
             s->port.txBufferTail = (s->port.txBufferTail + 1) % s->port.txBufferSize;
         } else {
