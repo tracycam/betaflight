@@ -265,6 +265,8 @@ COMMON_SRC = \
             io/displayport_frsky_osd.c \
             io/displayport_max7456.c \
             io/displayport_msp.c \
+            io/displayport_theia.c \
+            io/displayport_theia_ring.c \
             io/displayport_oled.c \
             io/displayport_srxl.c \
             io/displayport_crsf.c \

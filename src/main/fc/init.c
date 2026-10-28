@@ -117,6 +117,7 @@
 #include "io/displayport_frsky_osd.h"
 #include "io/displayport_max7456.h"
 #include "io/displayport_msp.h"
+#include "io/displayport_theia.h"
 #include "io/dronecan/dronecan.h"
 #include "io/flashfs.h"
 #include "io/gimbal.h"
@@ -950,7 +951,20 @@ void initPhase3(void)
             device = osdConfig()->displayPortDevice;
         }
 
+#if defined(USE_THEIA_OSD)
+        if (device == OSD_DISPLAYPORT_DEVICE_AUTO) {
+            device = OSD_DISPLAYPORT_DEVICE_THEIA;
+        }
+#endif
+
         switch(device) {
+
+#if defined(USE_THEIA_OSD)
+        case OSD_DISPLAYPORT_DEVICE_THEIA:
+            osdDisplayPort = displayPortTheiaInit();
+            osdDisplayPortDevice = OSD_DISPLAYPORT_DEVICE_THEIA;
+            break;
+#endif
 
         case OSD_DISPLAYPORT_DEVICE_AUTO:
             FALLTHROUGH;

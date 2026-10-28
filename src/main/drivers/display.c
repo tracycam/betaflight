@@ -237,7 +237,8 @@ bool displaySupportsOsdSymbols(displayPort_t *instance)
     if ((instance->deviceType == DISPLAYPORT_DEVICE_TYPE_MAX7456)
         || (instance->deviceType == DISPLAYPORT_DEVICE_TYPE_FBOSD)
         || (instance->deviceType == DISPLAYPORT_DEVICE_TYPE_MSP)
-        || (instance->deviceType == DISPLAYPORT_DEVICE_TYPE_FRSKYOSD)) {
+        || (instance->deviceType == DISPLAYPORT_DEVICE_TYPE_FRSKYOSD)
+        || (instance->deviceType == DISPLAYPORT_DEVICE_TYPE_THEIA)) {
         return true;
     } else {
         return false;
