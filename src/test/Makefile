@@ -296,6 +296,11 @@ msp_serial_unittest_DEFINES := \
 		USE_CLI= \
 		USE_MSP_DISPLAYPORT=
 
+msp_serial_no_bootloader_unittest_SRC := $(msp_serial_unittest_SRC)
+msp_serial_no_bootloader_unittest_DEFINES := \
+		$(msp_serial_unittest_DEFINES) \
+		PLATFORM_SUPPORTS_SOFTWARE_BOOTLOADER=0
+
 osd_unittest_SRC := \
 		$(USER_DIR)/osd/osd.c \
 		$(USER_DIR)/osd/osd_elements.c \

@@ -39,51 +39,21 @@ void systemReset(void)
 
 void systemResetToBootloader(bootloaderRequestType_e requestType)
 {
-    switch (requestType) {
-    case BOOTLOADER_REQUEST_ROM:
-    default:
-        persistentObjectWrite(PERSISTENT_OBJECT_RESET_REASON, RESET_BOOTLOADER_REQUEST_ROM);
-
-        break;
-    }
-
-    __disable_irq();
-    NVIC_SystemReset();
+    (void)requestType;
+    // Protocol entry points reject this operation. Keep a normal reset as a
+    // fallback for direct callers until the paired bootloader supports it.
+    persistentObjectWrite(PERSISTENT_OBJECT_RESET_REASON, RESET_NONE);
+    asm volatile ("fence iorw, iorw" ::: "memory");
+    systemReset();
 }
-
-// typedef void resetHandler_t(void);
-
-// typedef struct isrVector_s {
-//     __I uint32_t    stackEnd;
-//     resetHandler_t *resetHandler;
-// } isrVector_t;
 
 static void checkForBootLoaderRequest(void)
 {
-    volatile uint32_t bootloaderRequest = persistentObjectRead(PERSISTENT_OBJECT_RESET_REASON);
-
-    if (bootloaderRequest != RESET_BOOTLOADER_REQUEST_ROM) {
-        return;
-    }
-    persistentObjectWrite(PERSISTENT_OBJECT_RESET_REASON, RESET_NONE);
-
-
-
-    RCC_ClearFlag( );
-
-    FLASH_Unlock();
-
-    FLASH->BOOT_MODEKEYR = 0x45670123;
-    FLASH->BOOT_MODEKEYR = 0xCDEF89AB;
-
-    FLASH->STATR &= ~(1 << 14);
-    FLASH->STATR |= (1 << 14);  //switch to bootloader area (0x1FFF0000)
-
-    FLASH_Lock( );
-    NVIC_SystemReset( );
-
-    while (1) {
-        ;
+    const uint32_t bootloaderRequest = persistentObjectRead(PERSISTENT_OBJECT_RESET_REASON);
+    if (bootloaderRequest == RESET_BOOTLOADER_REQUEST_ROM || bootloaderRequest == RESET_BOOTLOADER_REQUEST_FLASH) {
+        // Ignore requests left by older firmware. WCH ROM ISP is not the
+        // H415 USB DFU bootloader; never change FLASH_STATR_BOOT_MODE here.
+        persistentObjectWrite(PERSISTENT_OBJECT_RESET_REASON, RESET_NONE);
     }
 }
 
