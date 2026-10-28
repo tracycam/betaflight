@@ -78,6 +78,9 @@ static void enableRxIrq(const uartHardware_t *hardware)
             .NVIC_IRQChannelCmd = ENABLE,
         };
         NVIC_Init(&nvicInit);
+#elif defined(CH32H4)
+        NVIC_SetPriority(hardware->irqn, hardware->rxPriority);
+        NVIC_EnableIRQ(hardware->irqn);
 #else
 # error "Unhandled MCU type"
 #endif
@@ -149,6 +152,13 @@ uartPort_t *serialUART(uartDevice_t *uartdev, uint32_t baudRate, portMode_e mode
             GPIO_DRIVE_STRENGTH_STRONGER,
             pushPull ? GPIO_OUTPUT_PUSH_PULL : GPIO_OUTPUT_OPEN_DRAIN,
             ((const gpio_pull_type[]){GPIO_PULL_NONE, GPIO_PULL_DOWN, GPIO_PULL_UP})[pull]
+        );
+#elif defined(CH32H4)
+        const ioConfig_t ioCfg = IO_CONFIG(
+            DIR_OUT,
+            pushPull ? GPIO_MODE_OUT_AF_PP : GPIO_MODE_OUT_AF_OD,
+            GPIO_SPEED_VERY_HIGH,
+            ((const unsigned[]){GPIO_PULL_NONE, GPIO_PULL_DOWN, GPIO_PULL_UP})[pull]
         );
 #elif defined(STM32F4)
         // UART inverter is not supproted on F4, but keep it in line with other CPUs
@@ -250,6 +260,7 @@ void uartConfigureDma(uartDevice_t *uartdev)
         }
     }
 
+#if !defined(USE_CHBSP_DRIVER)
     if (cfg->rxDmaopt != DMA_OPT_UNUSED) {
         dmaChannelSpec = dmaGetChannelSpecByPeripheral(DMA_PERIPH_UART_RX, uartDeviceIdx, cfg->rxDmaopt);
         if (dmaChannelSpec) {
@@ -261,6 +272,7 @@ void uartConfigureDma(uartDevice_t *uartdev)
 #endif
         }
     }
+#endif
 #else /* USE_DMA_SPEC */
     // Non USE_DMA_SPEC does not support configurable ON/OFF of UART DMA
 
@@ -292,6 +304,8 @@ void uartConfigureDma(uartDevice_t *uartdev)
 #endif
             dmaSetHandler(identifier, uartDmaIrqHandler, hardware->txPriority, (uint32_t)uartdev);
             uartPort->txDMAPeripheralBaseAddr = (uint32_t)&UART_REG_TXD(hardware->reg);
+        } else {
+            uartPort->txDMAResource = NULL;
         }
     }
 
@@ -303,6 +317,8 @@ void uartConfigureDma(uartDevice_t *uartdev)
             dmaMuxEnable(identifier, uartPort->rxDMAMuxId);
 #endif
             uartPort->rxDMAPeripheralBaseAddr = (uint32_t)&UART_REG_RXD(hardware->reg);
+        } else {
+            uartPort->rxDMAResource = NULL;
         }
     }
 }
