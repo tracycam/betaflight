@@ -265,7 +265,7 @@ uint8_t mscStart(void)
 
     NVIC_DisableIRQ(SysTick1_IRQn);
     asm ("fence.i");
-    NVIC_SetPriority(SysTick1_IRQn, 0);
+    NVIC_SetPriority(SysTick1_IRQn, NVIC_BUILD_PRIORITY(3, 0));
     NVIC_EnableIRQ(SysTick1_IRQn);
 
     return 0;

@@ -11,9 +11,9 @@ def fn(rel,marker):
   if s[i]=='}':n-=1
   i+=1
  return '#line %d "%s"\n'%(s[:start].count('\n')+1,p)+s[start:i]+'\n#line 1 "audit_harness"\n'
-def run(name,src,timeout=2):
+def run(name,src,timeout=2,extra_flags=()):
  p=out/(name+'.c');p.write_text(common+src)
- cmd=['gcc','-std=gnu11','-O1','-g','-fsanitize=undefined','-fno-sanitize-recover=all','-Wno-pointer-to-int-cast',str(p),'-o',str(out/name)]
+ cmd=['gcc','-std=gnu11','-O1','-g','-Werror','-fsanitize=undefined','-fno-sanitize-recover=all','-Wno-pointer-to-int-cast',*extra_flags,str(p),'-o',str(out/name)]
  c=subprocess.run(cmd,capture_output=True,text=True)
  if c.returncode:
   raise RuntimeError(f'{name}: build failed\n{c.stderr}')
@@ -26,17 +26,15 @@ def run(name,src,timeout=2):
   raise RuntimeError(f'{name}: failed with exit code {e.returncode}\n{e.stdout}{e.stderr}')
 
 pf='src/platform/CH32/include/platform/platform.h'
-run('pfic', 'static volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'+fn(pf,'__attribute__((always_inline)) static inline uint32_t __get_BASEPRI')+fn(pf,'__attribute__((always_inline)) static inline uint32_t ch32AtomicPriority')+fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb')+'''
-int main(void){
- threshold=0; __set_BASEPRI_MAX_nb(0x50); if(threshold!=0x60) return 1;
- threshold=0; __set_BASEPRI_MAX_nb(0x80); if(threshold!=0x90) return 1;
- threshold=0; __set_BASEPRI_MAX_nb(0x00); if(threshold!=0x10) return 1;
- threshold=0x50; __set_BASEPRI_MAX_nb(0x10); if(threshold!=0x20) return 1;
- threshold=0x10; __set_BASEPRI_MAX_nb(0x50); if(threshold!=0x10) return 1;
- puts("PFIC thresholds cover subpriority, zero and equal-boundary cases");
- return 0;
-}
-''')
+host_include=out/'include'
+host_include.mkdir(exist_ok=True)
+(host_include/'platform.h').write_text('/* The host tests supply simulated peripherals. */\n')
+run('pfic', '#include "platform/priority.h"\nstatic volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'
+    +fn(pf,'__attribute__((always_inline)) static inline uint32_t __get_BASEPRI')
+    +fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_nb')
+    +fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb')
+    +(root/'src/test/ch32h415/pfic_test.c').read_text(),
+    extra_flags=('-Wall','-Wextra','-I'+str(host_include),'-I'+str(root/'src/main'),'-I'+str(root/'src/platform/CH32/include')))
 
 bb='src/platform/CH32/dshot_bitbang.c'
 pre='''

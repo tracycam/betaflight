@@ -172,7 +172,7 @@ uint32_t SysTick_Config(uint32_t ticks)
     SysTick1->CMP = (uint32_t)(ticks - 1UL);                        /* set reload register */
     SysTick1->CNT = 0UL;                                            /* Load the SysTick Counter Value */
     SysTick1->CTLR = (1 << 6) | (1 << 4) | (1 << 3) | (1 << 2) | (1 << 1) | (1 << 0);
-    NVIC_SetPriority(SysTick1_IRQn, 0xF0);                           /* set Priority for Systick Interrupt */
+    NVIC_SetPriority(SysTick1_IRQn, NVIC_BUILD_PRIORITY(3, 0));       /* lowest preemption group */
     NVIC_EnableIRQ(SysTick1_IRQn);
     return(0UL);                                                    /* Function successful */
 }

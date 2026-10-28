@@ -27,6 +27,7 @@
 
 #include "ch32h417.h"
 #include "ch32_debug.h"
+#include "platform/priority.h"
 
 
 // Chip Unique ID on H41X
@@ -43,6 +44,7 @@
 
 __attribute__((always_inline)) static inline uint32_t __get_BASEPRI(void)
 {
+    // ATOMIC_BLOCK saves and restores the raw PFIC threshold.
     return PFIC_ITHRESDR & 0xF0;
 }
 
@@ -51,24 +53,11 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_nb(uint32_t base
     PFIC_ITHRESDR = basePri & 0xF0;
 }
 
-__attribute__((always_inline)) static inline uint32_t ch32AtomicPriority(uint32_t basePri)
-{
-    const uint32_t priority = basePri & 0xF0;
-
-    if (priority == 0) {
-        return 0x10;
-    }
-    if (priority >= 0xF0) {
-        return 0xF0;
-    }
-    return priority + 0x10;
-}
-
 __attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb(uint32_t basePri)
 {
     const uint32_t priority = ch32AtomicPriority(basePri);
     const uint32_t current = __get_BASEPRI();
-    if (current == 0 || priority < current) {
+    if (priority != 0 && (current == 0 || priority < current)) {
         PFIC_ITHRESDR = priority;
     }
 }
@@ -80,14 +69,16 @@ __attribute__((always_inline)) static inline void ch32DmaBarrier(void)
 
 __attribute__((always_inline)) static inline void __set_BASEPRI(uint32_t basePri)
 {
+    // Publish protected writes before restoring a less restrictive threshold.
+    asm volatile ("fence iorw, iorw" ::: "memory");
     __set_BASEPRI_nb(basePri);
-    asm volatile ("fence" ::: "memory");
+    asm volatile ("fence iorw, iorw" ::: "memory");
 }
 
 __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t basePri)
 {
     __set_BASEPRI_MAX_nb(basePri);
-    asm volatile ("fence" ::: "memory");
+    asm volatile ("fence iorw, iorw" ::: "memory");
 }
 
 #define PLATFORM_CUSTOM_BASEPRI_NB
@@ -258,14 +249,6 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 #endif
 
 #define DMA_CHANREQ_STRING "Request"
-
-
-#define NVIC_PRIORITY_GROUPING  0x500
-#define NVIC_BUILD_PRIORITY(base, \
-                            sub) (((((base) << (4 - (7 - (NVIC_PRIORITY_GROUPING >> 8)))) | \
-                                    ((sub) & (0x0f >> (7 - (NVIC_PRIORITY_GROUPING >> 8))))) << 4) & 0xf0)
-#define NVIC_PRIORITY_BASE(prio) (((prio) >> (4 - (7 - (NVIC_PRIORITY_GROUPING >> 8)))) >> 4)
-#define NVIC_PRIORITY_SUB(prio) (((prio) >> 4) & (0x0f >> (7 - (NVIC_PRIORITY_GROUPING >> 8))))
 
 
 #define FLASH_CONFIG_BUFFER_TYPE      uint32_t
