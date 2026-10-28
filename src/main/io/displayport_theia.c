@@ -2,7 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "platform.h"
-#if defined(CH32H415) && defined(USE_THEIA_OSD)
+#if defined(CH32H4) && defined(USE_THEIA_OSD)
 #include <string.h>
 #include "drivers/display.h"
 #include "drivers/osd.h"

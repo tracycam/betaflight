@@ -28,7 +28,7 @@
 
 bool dmaAllocate(dmaIdentifier_e identifier, resourceOwner_e owner, uint8_t resourceIndex)
 {
-#if defined(CH32H415) && defined(USE_THEIA_OSD)
+#if defined(CH32H4) && defined(USE_THEIA_OSD)
     if (identifier == DMA2_CH6_HANDLER) {
         return false;
     }
