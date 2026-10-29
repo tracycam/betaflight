@@ -50,6 +50,11 @@
 #define USB_TIMEOUT  50
 
 static vcpPort_t vcpPort = { 0 };
+#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+#include "target/CH32H415/boot_sdi.h"
+static bool usbCoreInitialized;
+static bool usbReleasedForDebug;
+#endif
 
 // #define APP_RX_DATA_SIZE  2048
 #define APP_TX_DATA_SIZE  2048
@@ -235,11 +240,21 @@ void usb_int_rxsof_handler(void)     //1ms
 
 uint8_t usbIsConnected(void)
 {
+#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+    if (usbReleasedForDebug) {
+        return false;
+    }
+#endif
     return((usbd_cdc_info != USBD_EVENT_DISCONNECTED) && (usbd_cdc_info != USBD_EVENT_UNKNOWN));
 }
 
 uint8_t usbIsConfigured(void)
 {
+#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+    if (usbReleasedForDebug) {
+        return false;
+    }
+#endif
     return(usbd_cdc_info == USBD_EVENT_CONFIGURED);
 }
 
@@ -290,6 +305,11 @@ static bool isUsbVcpTransmitBufferEmpty(const serialPort_t *instance)
 static uint32_t usbVcpAvailable(const serialPort_t *instance)
 {
     UNUSED(instance);
+#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+    if (usbReleasedForDebug) {
+        return 0;
+    }
+#endif
 
 //     uint32_t available = APP_Rx_ptr_in-APP_Rx_ptr_out;
 
@@ -449,6 +469,9 @@ void usbVcpInit(void)
 
     usb_rxsof_handler = usb_int_rxsof_handler;
     cdc_acm_init(0, 0);
+#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+    usbCoreInitialized = true;
+#endif
 
     NVIC_SetPriority(USBHS_IRQn, NVIC_PRIO_USB);
     NVIC_EnableIRQ(USBHS_IRQn);
@@ -459,6 +482,29 @@ void usbVcpInit(void)
     // s->port.vTable = usbVTable;
     // return &s->port;
 }
+
+#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+void ch32h415UsbReleaseForDebug(void)
+{
+    /* Called from the system task, never the USB interrupt. Disable the IRQ
+     * before taking down CherryUSB so no callback races the handoff. */
+    NVIC_DisableIRQ(USBHS_IRQn);
+    usbReleasedForDebug = true;
+    usbCableDetectDeinit();
+    if (usbCoreInitialized) {
+        (void)usbd_deinitialize(0);
+        usbCoreInitialized = false;
+    }
+    USBHSD->INT_EN = 0;
+    USBHSD->CONTROL = 0;
+    RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS, DISABLE);
+    RCC_UTMIcmd(DISABLE);
+    /* USBHS and SWCLK/SWDIO share PB8/PB9. Do not stop USBHS PLL: the
+     * bootloader may have selected it as the shared system clock source. */
+    GPIO_PinRemapConfig(GPIO_Remap_SWJ_Disable, DISABLE);
+    __asm volatile("fence iorw, iorw" ::: "memory");
+}
+#endif
 
 
 serialPort_t *usbVcpOpen(void)

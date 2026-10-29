@@ -135,6 +135,7 @@ MCU_COMMON_SRC = \
         CH32/serial_uart_ch32h41x.c \
         CH32/serial_usb_vcp_ch32h4.c \
         CH32/system_ch32h41x.c \
+        CH32/target/CH32H415/boot_sdi.c \
         CH32/timer_ch32bsp.c \
         CH32/timer_ch32h41x.c \
         CH32/usb_msc_ch32h41x.c \

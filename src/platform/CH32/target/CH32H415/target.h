@@ -35,6 +35,9 @@
 #define CH32H41x
 #endif
 
+#if defined(CH32H415_BOOT_SDI) && defined(CH32H415_NO_USB)
+#error "CH32H415_BOOT_SDI requires the BF USB VCP build"
+#endif
 
 #ifndef CH32H415_NO_USB
 #define USE_VCP
@@ -65,7 +68,11 @@
 /* PA5/6/7/12, PB0/1/7 and PC4 are exclusively owned by TheiaOSD. */
 #define TARGET_IO_PORTA         0xef1f
 #define TARGET_IO_PORTB         0xff7c
+#ifdef CH32H415_BOOT_SDI
+#define TARGET_IO_PORTC         0xfeef  // PC8 is the BOOT button
+#else
 #define TARGET_IO_PORTC         0xffef
+#endif
 #define TARGET_IO_PORTD         0xffff
 #define TARGET_IO_PORTE         0xffff
 #define TARGET_IO_PORTF         0xffff

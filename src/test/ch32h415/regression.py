@@ -380,6 +380,73 @@ int main(void) {
 }
 ''')
 
+run('boot_button_sdi', '''
+#define BOOT_SDI_HOLD_US 5000000u
+#define GPIO_Pin_8 (1u << 8)
+#define GPIO_Speed_Medium 1
+#define GPIO_Mode_IPD 2
+typedef uint32_t timeUs_t;
+typedef struct { unsigned GPIO_Pin, GPIO_Speed, GPIO_Mode; } GPIO_InitTypeDef;
+typedef struct { unsigned INDR; } gpio_t;
+static gpio_t port;
+#define GPIOC (&port)
+static unsigned initCount, tasks, handoffs;
+static void GPIO_Init(gpio_t *p, GPIO_InitTypeDef *g) {
+    if (p != GPIOC || g->GPIO_Pin != GPIO_Pin_8 || g->GPIO_Mode != GPIO_Mode_IPD) abort();
+    initCount++;
+}
+static void taskSystemLoad(timeUs_t t) { (void)t; tasks++; }
+static void ch32h415UsbReleaseForDebug(void) { handoffs++; }
+''' + fn('src/platform/CH32/target/CH32H415/boot_sdi.c', 'void ch32h415BootSdiSystemTask(') + '''
+int main(void) {
+    uint32_t t = UINT32_MAX - 1000u;
+    ch32h415BootSdiSystemTask(t);
+    if (initCount != 1 || handoffs) return 1;
+    port.INDR = GPIO_Pin_8; ch32h415BootSdiSystemTask(t);
+    t += 4999999u; ch32h415BootSdiSystemTask(t);
+    if (handoffs) return 2;
+    port.INDR = 0; ch32h415BootSdiSystemTask(t);
+    port.INDR = GPIO_Pin_8; ch32h415BootSdiSystemTask(t);
+    t += 5000000u; ch32h415BootSdiSystemTask(t);
+    if (handoffs != 1 || initCount != 1) return 3;
+    port.INDR = 0; ch32h415BootSdiSystemTask(t+10);
+    port.INDR = GPIO_Pin_8; ch32h415BootSdiSystemTask(t+6000000u);
+    return handoffs != 1 || tasks != 8;
+}
+''')
+
+run('usb_sdi_handoff', '''
+#define USBHS_IRQn 1
+#define RCC_HBPeriph_USBHS 2
+#define GPIO_Remap_SWJ_Disable 3
+#define DISABLE 0
+typedef struct { unsigned INT_EN, CONTROL; } usb_t;
+static usb_t usb;
+#define USBHSD (&usb)
+static bool usbCoreInitialized, usbReleasedForDebug;
+static unsigned irqDisabled, deinitialized, clockDisabled, phyDisabled, remapped, detectDeinitialized;
+static void NVIC_DisableIRQ(int n) { if (n != USBHS_IRQn) abort(); irqDisabled++; }
+static void usbCableDetectDeinit(void) { if (!irqDisabled || !usbReleasedForDebug) abort(); detectDeinitialized++; }
+static int usbd_deinitialize(int bus) { if (bus || !irqDisabled || !usbReleasedForDebug) abort(); deinitialized++; return 0; }
+static void RCC_HBPeriphClockCmd(int periph, int on) {
+    if (periph != RCC_HBPeriph_USBHS || on || usb.INT_EN || usb.CONTROL) abort(); clockDisabled++;
+}
+static void RCC_UTMIcmd(int on) { if (on || !clockDisabled) abort(); phyDisabled++; }
+static void GPIO_PinRemapConfig(int remap, int on) {
+    if (remap != GPIO_Remap_SWJ_Disable || on || !phyDisabled) abort(); remapped++;
+}
+''' + fn('src/platform/CH32/serial_usb_vcp_ch32h4.c', 'void ch32h415UsbReleaseForDebug(')
+       .replace('__asm volatile("fence iorw, iorw" ::: "memory");', '') + '''
+int main(void) {
+    usbCoreInitialized = true; usb.INT_EN = usb.CONTROL = 1;
+    ch32h415UsbReleaseForDebug();
+    if (!usbReleasedForDebug || usbCoreInitialized || deinitialized != 1 || remapped != 1) return 1;
+    usbReleasedForDebug = false; usb.INT_EN = usb.CONTROL = 1;
+    ch32h415UsbReleaseForDebug();
+    return !usbReleasedForDebug || deinitialized != 1 || remapped != 2 || detectDeinitialized != 2;
+}
+''')
+
 ic='src/platform/CH32/bus_i2c_ch32h41x.c'
 pre='''
 #define I2CINVALID -1
