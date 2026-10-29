@@ -77,7 +77,8 @@ static int writeChar(displayPort_t *port, uint8_t col, uint8_t row, uint8_t attr
 }
 static int writeSys(displayPort_t *port, uint8_t col, uint8_t row, displayPortSystemElement_e element)
 {
-    (void)port; (void)col; (void)row; (void)element; return 0;
+    /* Goggles-side system elements have no analog OSD equivalent. */
+    (void)port; (void)col; (void)row; (void)element; return -1;
 }
 static bool transfer(const displayPort_t *port)
 {
@@ -85,7 +86,9 @@ static bool transfer(const displayPort_t *port)
 }
 static bool synced(const displayPort_t *port)
 {
-    (void)port; return !producer.dirty && !producer.staged;
+    (void)port;
+    return theiaProducerReady(&producer) && *producer.mailbox.resync == producer.seenResync &&
+        !producer.dirty && !producer.staged;
 }
 static void redraw(displayPort_t *port)
 {
