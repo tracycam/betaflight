@@ -448,6 +448,7 @@ extern "C" {
 
     mspDescriptor_t mspDescriptorAlloc(void) {return 0; }
 
+    void mspFcCancelDeferredCommand(mspDescriptor_t, int16_t) {}
     uint8_t mspSerialOutBuf[MSP_PORT_OUTBUF_SIZE];
 
     mspResult_e mspFcProcessCommand(mspDescriptor_t srcDesc, mspPacket_t *cmd, mspPacket_t *reply, mspPostProcessFnPtr *mspPostProcessFn) {

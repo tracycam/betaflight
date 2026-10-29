@@ -93,6 +93,9 @@ void mspSerialReleasePortIfAllocated(serialPort_t *serialPort)
 {
     for (mspPort_t *candidateMspPort = mspPorts; candidateMspPort < ARRAYEND(mspPorts); candidateMspPort++) {
         if (candidateMspPort->port == serialPort) {
+            if (candidateMspPort->deferredCommand) {
+                mspFcCancelDeferredCommand(candidateMspPort->descriptor, candidateMspPort->cmdMSP);
+            }
             closeSerialPort(serialPort);
             memset(candidateMspPort, 0, sizeof(mspPort_t));
         }
@@ -114,6 +117,9 @@ void mspSerialReleaseSharedTelemetryPorts(void)
 {
     for (mspPort_t *candidateMspPort = mspPorts; candidateMspPort < ARRAYEND(mspPorts); candidateMspPort++) {
         if (candidateMspPort->sharedWithTelemetry) {
+            if (candidateMspPort->deferredCommand) {
+                mspFcCancelDeferredCommand(candidateMspPort->descriptor, candidateMspPort->cmdMSP);
+            }
             closeSerialPort(candidateMspPort->port);
             memset(candidateMspPort, 0, sizeof(mspPort_t));
         }
@@ -433,8 +439,9 @@ static mspPostProcessFnPtr mspSerialProcessReceivedCommand(mspPort_t *msp, mspPr
 
     mspPostProcessFnPtr mspPostProcessFn = NULL;
     const mspResult_e status = mspProcessCommandFn(msp->descriptor, &command, &reply, &mspPostProcessFn);
+    msp->deferredCommand = status == MSP_RESULT_DEFERRED;
 
-    if (status != MSP_RESULT_NO_REPLY) {
+    if (status != MSP_RESULT_NO_REPLY && status != MSP_RESULT_DEFERRED) {
         sbufSwitchToReader(&reply.buf, outBufHead); // change streambuf direction
         mspSerialEncode(msp, &reply, msp->mspVersion);
     }
@@ -537,6 +544,21 @@ void mspSerialProcess(mspEvaluateNonMspData_e evaluateNonMspData, mspProcessComm
 {
     for (mspPort_t *mspPort = mspPorts; mspPort < ARRAYEND(mspPorts); mspPort++) {
         if (!mspPort->port) {
+            continue;
+        }
+
+        if (mspPort->deferredCommand) {
+            // A deferred command can complete only once. Make room for its
+            // empty acknowledgement before polling it, so a full TX queue
+            // cannot discard the result after the operation has completed.
+            if (!isSerialTransmitBufferEmpty(mspPort->port) && serialTxBytesFree(mspPort->port) < 16) {
+                continue;
+            }
+            mspPostProcessFnPtr post = mspSerialProcessReceivedCommand(mspPort, mspProcessCommandFn);
+            if (post) {
+                waitForSerialPortToFinishTransmitting(mspPort->port);
+                post(mspPort->port);
+            }
             continue;
         }
 

@@ -15,6 +15,10 @@
 static displayPort_t display;
 static theiaProducer_t producer;
 static bool initialized;
+static int fontOwner;
+static uint16_t fontGlyph;
+static uint8_t fontData[54];
+static timeUs_t fontStartedAt;
 #define WORD(address) ((volatile uint32_t *)(address))
 static void geometry(displayPort_t *port)
 {
@@ -91,30 +95,44 @@ static uint32_t bytesFree(const displayPort_t *port)
 {
     (void)port; return theiaProducerBytesFree(&producer);
 }
-static bool fontWrite(displayPort_t *port, uint16_t glyph, const osdCharacter_t *chr)
+static displayFontResult_e fontWrite(displayPort_t *port, uint16_t glyph, const osdCharacter_t *chr, int owner)
 {
     (void)port;
-    if (ARMING_FLAG(ARMED)) {
-        return false;
+    if (!chr || glyph >= H415C_FONT_GLYPHS) {
+        return DISPLAY_FONT_ERROR;
     }
-    if (glyph >= H415C_FONT_GLYPHS || !theiaProducerFontWrite(&producer, glyph, chr->data)) {
-        return false;
-    }
-
-    const timeUs_t startedAt = micros();
-    while (micros() - startedAt < 1000000) {
+    if (producer.fontOutstanding) {
+        if (owner != fontOwner || glyph != fontGlyph || memcmp(fontData, chr->data, sizeof(fontData))) {
+            return DISPLAY_FONT_ERROR;
+        }
         const theiaFontStatus_e status = theiaProducerFontStatus(&producer);
         if (status == THEIA_FONT_DONE) {
-            return true;
+            return DISPLAY_FONT_DONE;
         }
         if (status == THEIA_FONT_ERROR) {
-            break;
+            return DISPLAY_FONT_ERROR;
         }
-        delayMicroseconds(100);
+        if (ARMING_FLAG(ARMED) || (timeUs_t)(micros() - fontStartedAt) >= 1000000u) {
+            theiaProducerFontCancel(&producer);
+            return DISPLAY_FONT_ERROR;
+        }
+        return DISPLAY_FONT_PENDING;
     }
-
-    theiaProducerFontCancel(&producer);
-    return false;
+    if (ARMING_FLAG(ARMED) || !theiaProducerFontWrite(&producer, glyph, chr->data)) {
+        return DISPLAY_FONT_ERROR;
+    }
+    fontOwner = owner;
+    fontGlyph = glyph;
+    memcpy(fontData, chr->data, sizeof(fontData));
+    fontStartedAt = micros();
+    return DISPLAY_FONT_PENDING;
+}
+static void cancelFontWrite(displayPort_t *port, int owner)
+{
+    (void)port;
+    if (producer.fontOutstanding && owner == fontOwner) {
+        theiaProducerFontCancel(&producer);
+    }
 }
 static bool ready(displayPort_t *port, bool rescan)
 {
@@ -124,7 +142,8 @@ static const displayPortVTable_t vtable = {
     .grab = grab, .release = release, .clearScreen = clearScreen, .drawScreen = drawScreen,
     .screenSize = screenSize, .writeSys = writeSys, .writeString = writeString, .writeChar = writeChar,
     .isTransferInProgress = transfer, .heartbeat = heartbeat, .redraw = redraw, .isSynced = synced,
-    .txBytesFree = bytesFree, .writeFontCharacter = fontWrite, .checkReady = ready,
+    .txBytesFree = bytesFree, .writeFontCharacterAsync = fontWrite,
+    .cancelFontWrite = cancelFontWrite, .checkReady = ready,
     .commitTransaction = commit,
 };
 displayPort_t *displayPortTheiaInit(void)

@@ -177,6 +177,21 @@ bool displayWriteFontCharacter(displayPort_t *instance, uint16_t addr, const osd
     return false;
 }
 
+displayFontResult_e displayWriteFontCharacterAsync(displayPort_t *instance, uint16_t addr, const osdCharacter_t *chr, int owner)
+{
+    if (instance->vTable->writeFontCharacterAsync) {
+        return instance->vTable->writeFontCharacterAsync(instance, addr, chr, owner);
+    }
+    return displayWriteFontCharacter(instance, addr, chr) ? DISPLAY_FONT_DONE : DISPLAY_FONT_ERROR;
+}
+
+void displayCancelFontWrite(displayPort_t *instance, int owner)
+{
+    if (instance->vTable->cancelFontWrite) {
+        instance->vTable->cancelFontWrite(instance, owner);
+    }
+}
+
 void displayFontUpdateCompletion(displayPort_t *instance)
 {
     if (instance->vTable->fontUpdateCompletion) {

@@ -36,6 +36,7 @@ typedef enum {
 // return positive for ACK, negative on error, zero for no reply
 typedef enum {
     MSP_RESULT_ACK = 1,
+    MSP_RESULT_DEFERRED = 2, // transport must retry the same request without blocking
     MSP_RESULT_ERROR = -1,
     MSP_RESULT_NO_REPLY = 0,
     MSP_RESULT_CMD_UNKNOWN = -2,   // don't know how to process command, try next handler
@@ -63,6 +64,7 @@ typedef void (*mspProcessReplyFnPtr)(mspPacket_t *cmd);
 
 void mspInit(void);
 mspResult_e mspFcProcessCommand(mspDescriptor_t srcDesc, mspPacket_t *cmd, mspPacket_t *reply, mspPostProcessFnPtr *mspPostProcessFn);
+void mspFcCancelDeferredCommand(mspDescriptor_t srcDesc, int16_t command);
 void mspFcProcessReply(mspPacket_t *reply);
 
 mspDescriptor_t mspDescriptorAlloc(void);

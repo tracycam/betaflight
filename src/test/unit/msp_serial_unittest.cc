@@ -91,14 +91,19 @@ extern "C" {
     const serialPortConfig_t *serialFindPortConfiguration(serialPortIdentifier_e) { return NULL; }
 
     // --- inert serial/system/msp stubs (off the tested path) ---
-    uint32_t serialTxBytesFree(const serialPort_t *) { return FAKE_RX_CAP; }
-    void serialWriteBufNoFlush(serialPort_t *, const uint8_t *, int) {}
-    bool isSerialTransmitBufferEmpty(const serialPort_t *) { return true; }
+    static uint32_t fakeTxFree;
+    static bool fakeTxEmpty;
+    uint32_t serialTxBytesFree(const serialPort_t *) { return fakeTxFree; }
+    static unsigned fakeTxBytes;
+    void serialWriteBufNoFlush(serialPort_t *, const uint8_t *, int length) { fakeTxBytes += length; }
+    bool isSerialTransmitBufferEmpty(const serialPort_t *) { return fakeTxEmpty; }
     void serialBeginWrite(serialPort_t *) {}
     void serialEndWrite(serialPort_t *) {}
     void waitForSerialPortToFinishTransmitting(serialPort_t *) {}
     void closeSerialPort(serialPort_t *) {}
     mspDescriptor_t mspDescriptorAlloc(void) { return 0; }
+    static int deferredCancelCount;
+    void mspFcCancelDeferredCommand(mspDescriptor_t, int16_t) { deferredCancelCount++; }
     // Never the test port's identifier, so non-MSP bytes are always evaluated.
     serialPortIdentifier_e displayPortMspGetSerial(void) { return (serialPortIdentifier_e)-1; }
 
@@ -108,7 +113,15 @@ extern "C" {
     const uint32_t baudRates[BAUD_COUNT] = { 0 };
 
     // --- MSP command/reply sinks ---
-    static mspResult_e fakeCmd(mspDescriptor_t, mspPacket_t *, mspPacket_t *, mspPostProcessFnPtr *) {
+    static unsigned fakePendingTries, fakeCommandCalls;
+    static mspResult_e fakeCmd(mspDescriptor_t, mspPacket_t *command, mspPacket_t *reply, mspPostProcessFnPtr *) {
+        fakeCommandCalls++;
+        if (fakePendingTries) {
+            fakePendingTries--;
+            return MSP_RESULT_DEFERRED;
+        }
+        reply->cmd = command->cmd;
+        reply->result = MSP_RESULT_ACK;
         return MSP_RESULT_ACK;
     }
     static void fakeReply(mspPacket_t *) {}
@@ -130,6 +143,10 @@ protected:
         lastCliInteractive = false;
         lastRebootRequest = BOOTLOADER_REQUEST_ROM;
         fakeMillis = 1000;
+        fakeTxBytes = fakePendingTries = fakeCommandCalls = 0;
+        fakeTxFree = FAKE_RX_CAP;
+        fakeTxEmpty = true;
+        deferredCancelCount = 0;
 
         memset(&fakeSerialPort, 0, sizeof(fakeSerialPort));
         memset(&fakePortConfig, 0, sizeof(fakePortConfig));
@@ -152,6 +169,51 @@ protected:
     static void process() { mspSerialProcess(MSP_EVALUATE_NON_MSP_DATA, fakeCmd, fakeReply); }
     static void advanceMs(uint32_t ms) { fakeMillis += ms; }
 };
+
+TEST_F(MspSerialPendingRequestTest, DeferredCommandWaitsWithoutConsumingNextPacket)
+{
+    fakePendingTries = 2;
+    feed(VALID_V1_FRAME, sizeof(VALID_V1_FRAME));
+    feed(VALID_V1_FRAME, sizeof(VALID_V1_FRAME));
+    process();
+    EXPECT_EQ(1u, fakeCommandCalls);
+    EXPECT_EQ(0u, fakeTxBytes);
+    EXPECT_EQ(sizeof(VALID_V1_FRAME), serialRxBytesWaiting(&fakeSerialPort));
+    process();
+    EXPECT_EQ(2u, fakeCommandCalls);
+    EXPECT_EQ(0u, fakeTxBytes);
+    process();
+    EXPECT_EQ(3u, fakeCommandCalls);
+    EXPECT_GT(fakeTxBytes, 0u);
+    EXPECT_EQ(sizeof(VALID_V1_FRAME), serialRxBytesWaiting(&fakeSerialPort));
+    process();
+    EXPECT_EQ(4u, fakeCommandCalls);
+}
+
+TEST_F(MspSerialPendingRequestTest, DeferredCompletionWaitsForTransmitSpace)
+{
+    fakePendingTries = 1;
+    feed(VALID_V1_FRAME, sizeof(VALID_V1_FRAME));
+    process();
+    fakeTxEmpty = false;
+    fakeTxFree = 0;
+    process();
+    EXPECT_EQ(1u, fakeCommandCalls);
+    EXPECT_EQ(0u, fakeTxBytes);
+    fakeTxFree = FAKE_RX_CAP;
+    process();
+    EXPECT_EQ(2u, fakeCommandCalls);
+    EXPECT_GT(fakeTxBytes, 0u);
+}
+
+TEST_F(MspSerialPendingRequestTest, ReleasingPortCancelsDeferredCommand)
+{
+    fakePendingTries = 1;
+    feed(VALID_V1_FRAME, sizeof(VALID_V1_FRAME));
+    process();
+    mspSerialReleasePortIfAllocated(&fakeSerialPort);
+    EXPECT_EQ(1, deferredCancelCount);
+}
 
 // Preserved behaviour (the #15193 fix): '#' followed by CR must still enter the
 // CLI — the trailing '\r' must not wipe MSP_PENDING_CLI before the guard fires.

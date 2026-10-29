@@ -4766,7 +4766,11 @@ RAM_CODE static mspResult_e mspCommonProcessInCommand(mspDescriptor_t srcDesc, i
                 return MSP_RESULT_ERROR;
             }
 
-            if (!displayWriteFontCharacter(osdDisplayPort, addr, &chr)) {
+            const displayFontResult_e fontResult = displayWriteFontCharacterAsync(osdDisplayPort, addr, &chr, srcDesc);
+            if (fontResult == DISPLAY_FONT_PENDING) {
+                return MSP_RESULT_DEFERRED;
+            }
+            if (fontResult != DISPLAY_FONT_DONE) {
                 return MSP_RESULT_ERROR;
             }
 
@@ -4802,9 +4806,22 @@ RAM_CODE static mspResult_e mspCommonProcessInCommand(mspDescriptor_t srcDesc, i
     return MSP_RESULT_ACK;
 }
 
-/*
- * Returns MSP_RESULT_ACK, MSP_RESULT_ERROR or MSP_RESULT_NO_REPLY
- */
+void mspFcCancelDeferredCommand(mspDescriptor_t srcDesc, int16_t command)
+{
+#ifdef USE_OSD
+    if (command == MSP_OSD_CHAR_WRITE) {
+        displayPort_t *port = osdGetDisplayPort(NULL);
+        if (port) {
+            displayCancelFontWrite(port, srcDesc);
+        }
+    }
+#else
+    UNUSED(srcDesc);
+    UNUSED(command);
+#endif
+}
+
+/* Returns ACK, ERROR, NO_REPLY, or DEFERRED for an unfinished operation. */
 RAM_CODE mspResult_e mspFcProcessCommand(mspDescriptor_t srcDesc, mspPacket_t *cmd, mspPacket_t *reply, mspPostProcessFnPtr *mspPostProcessFn)
 {
     int ret = MSP_RESULT_ACK;

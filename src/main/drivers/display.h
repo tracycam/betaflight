@@ -105,6 +105,12 @@ struct displayCanvas_s;
 struct osdCharacter_s;
 struct displayPortVTable_s;
 
+typedef enum {
+    DISPLAY_FONT_ERROR,
+    DISPLAY_FONT_DONE,
+    DISPLAY_FONT_PENDING,
+} displayFontResult_e;
+
 typedef struct displayPort_s {
     const struct displayPortVTable_s *vTable;
     void *device;
@@ -142,6 +148,8 @@ typedef struct displayPortVTable_s {
     bool (*layerSelect)(displayPort_t *displayPort, displayPortLayer_e layer);
     bool (*layerCopy)(displayPort_t *displayPort, displayPortLayer_e destLayer, displayPortLayer_e sourceLayer);
     bool (*writeFontCharacter)(displayPort_t *instance, uint16_t addr, const struct osdCharacter_s *chr);
+    displayFontResult_e (*writeFontCharacterAsync)(displayPort_t *instance, uint16_t addr, const struct osdCharacter_s *chr, int owner);
+    void (*cancelFontWrite)(displayPort_t *instance, int owner);
     bool (*checkReady)(displayPort_t *displayPort, bool rescan);
     void (*beginTransaction)(displayPort_t *displayPort, displayTransactionOption_e opts);
     void (*commitTransaction)(displayPort_t *displayPort);
@@ -172,6 +180,8 @@ void displayRedraw(displayPort_t *instance);
 bool displayIsSynced(const displayPort_t *instance);
 uint16_t displayTxBytesFree(const displayPort_t *instance);
 bool displayWriteFontCharacter(displayPort_t *instance, uint16_t addr, const struct osdCharacter_s *chr);
+displayFontResult_e displayWriteFontCharacterAsync(displayPort_t *instance, uint16_t addr, const struct osdCharacter_s *chr, int owner);
+void displayCancelFontWrite(displayPort_t *instance, int owner);
 void displayFontUpdateCompletion(displayPort_t *instance);
 bool displayCheckReady(displayPort_t *instance, bool rescan);
 void displayBeginTransaction(displayPort_t *instance, displayTransactionOption_e opts);

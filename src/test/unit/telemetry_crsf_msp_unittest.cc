@@ -298,6 +298,7 @@ extern "C" {
     bool isAirmodeEnabled(void) {return true;}
 
     mspDescriptor_t mspDescriptorAlloc(void) {return 0;}
+    void mspFcCancelDeferredCommand(mspDescriptor_t, int16_t) {}
 
     mspResult_e mspFcProcessCommand(mspDescriptor_t srcDesc, mspPacket_t *cmd, mspPacket_t *reply, mspPostProcessFnPtr *mspPostProcessFn) {
 

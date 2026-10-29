@@ -149,7 +149,12 @@ static void processMspPacket(void)
     responsePacket.buf.end = ARRAYEND(responseBuffer);
 
     mspPostProcessFnPtr mspPostProcessFn = NULL;
-    if (mspFcProcessCommand(mspSharedDescriptor, &requestPacket, &responsePacket, &mspPostProcessFn) == MSP_RESULT_ERROR) {
+    const mspResult_e result = mspFcProcessCommand(mspSharedDescriptor, &requestPacket, &responsePacket, &mspPostProcessFn);
+    if (result == MSP_RESULT_DEFERRED) {
+        mspFcCancelDeferredCommand(mspSharedDescriptor, requestPacket.cmd);
+        responsePacket.result = MSP_RESULT_ERROR;
+    }
+    if (result == MSP_RESULT_ERROR || result == MSP_RESULT_DEFERRED) {
         sbufWriteU8(&responsePacket.buf, TELEMETRY_MSP_ERROR);
     }
     if (mspPostProcessFn) {

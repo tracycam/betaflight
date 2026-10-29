@@ -299,6 +299,61 @@ int main(void) {
 }
 ''')
 
+run('theia_async_font', '''
+#define H415C_FONT_GLYPHS 512u
+#define ARMED 1
+#define ARMING_FLAG(x) (armed)
+typedef uint32_t timeUs_t;
+typedef struct { int unused; } displayPort_t;
+typedef struct { uint8_t data[64]; } osdCharacter_t;
+typedef enum { DISPLAY_FONT_ERROR, DISPLAY_FONT_DONE, DISPLAY_FONT_PENDING } displayFontResult_e;
+typedef enum { THEIA_FONT_PENDING, THEIA_FONT_DONE, THEIA_FONT_ERROR } theiaFontStatus_e;
+typedef struct { bool fontOutstanding; } theiaProducer_t;
+static theiaProducer_t producer;
+static int fontOwner;
+static uint16_t fontGlyph;
+static uint8_t fontData[54];
+static timeUs_t fontStartedAt, now;
+static bool armed;
+static int writes, cancels;
+static theiaFontStatus_e mockStatus;
+static timeUs_t micros(void) { return now; }
+static bool theiaProducerFontWrite(theiaProducer_t *p, uint16_t glyph, const uint8_t *data) {
+    (void)glyph; (void)data; writes++; p->fontOutstanding = true; return true;
+}
+static theiaFontStatus_e theiaProducerFontStatus(theiaProducer_t *p) {
+    if (mockStatus != THEIA_FONT_PENDING) p->fontOutstanding = false;
+    return mockStatus;
+}
+static void theiaProducerFontCancel(theiaProducer_t *p) { p->fontOutstanding = false; cancels++; }
+''' + fn('src/main/io/displayport_theia.c', 'static displayFontResult_e fontWrite(')
+    + fn('src/main/io/displayport_theia.c', 'static void cancelFontWrite(') + '''
+int main(void) {
+    osdCharacter_t chr = {0};
+    armed = true;
+    if (fontWrite(NULL, 1, &chr, 3) != DISPLAY_FONT_ERROR || writes) return 1;
+    armed = false; now = UINT32_MAX - 500000u;
+    if (fontWrite(NULL, 1, &chr, 3) != DISPLAY_FONT_PENDING || writes != 1) return 2;
+    if (fontWrite(NULL, 1, &chr, 4) != DISPLAY_FONT_ERROR || !producer.fontOutstanding) return 3;
+    cancelFontWrite(NULL, 4);
+    if (!producer.fontOutstanding || cancels) return 4;
+    if (fontWrite(NULL, 1, &chr, 3) != DISPLAY_FONT_PENDING || writes != 1) return 5;
+    now += 1000000u;
+    if (fontWrite(NULL, 1, &chr, 3) != DISPLAY_FONT_ERROR || producer.fontOutstanding || cancels != 1) return 6;
+    if (fontWrite(NULL, 1, &chr, 3) != DISPLAY_FONT_PENDING || writes != 2) return 7;
+    mockStatus = THEIA_FONT_DONE;
+    if (fontWrite(NULL, 1, &chr, 3) != DISPLAY_FONT_DONE || writes != 2) return 8;
+    mockStatus = THEIA_FONT_PENDING;
+    if (fontWrite(NULL, 1, &chr, 3) != DISPLAY_FONT_PENDING) return 9;
+    armed = true;
+    if (fontWrite(NULL, 1, &chr, 3) != DISPLAY_FONT_ERROR || cancels != 2) return 10;
+    armed = false;
+    if (fontWrite(NULL, 1, &chr, 3) != DISPLAY_FONT_PENDING) return 11;
+    cancelFontWrite(NULL, 3);
+    return producer.fontOutstanding || cancels != 3;
+}
+''')
+
 ic='src/platform/CH32/bus_i2c_ch32h41x.c'
 pre='''
 #define I2CINVALID -1
