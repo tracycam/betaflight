@@ -953,6 +953,7 @@ test_versions:
 .PHONY: test-ch32h415
 test-ch32h415:
 	$(V0) python3 src/test/ch32h415/regression.py
+	$(V0) python3 src/test/theia/split_image_test.py
 	$(V0) cc -std=gnu11 -O2 -Wall -Wextra -Werror -DTHEIA_PRODUCER_TEST -Isrc/test/unit -Isrc/main src/main/io/displayport_theia_ring.c src/test/theia/ring_test.c -o /tmp/bf_theia_ring_test
 	$(V0) /tmp/bf_theia_ring_test
 
