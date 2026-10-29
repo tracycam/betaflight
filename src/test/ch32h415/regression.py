@@ -424,14 +424,11 @@ typedef struct { unsigned INT_EN, CONTROL; } usb_t;
 static usb_t usb;
 #define USBHSD (&usb)
 static bool usbCoreInitialized, usbReleasedForDebug;
-static unsigned irqDisabled, deinitialized, clockDisabled, phyDisabled, remapped, detectDeinitialized;
+static unsigned irqDisabled, deinitialized, phyDisabled, remapped, detectDeinitialized;
 static void NVIC_DisableIRQ(int n) { if (n != USBHS_IRQn) abort(); irqDisabled++; }
 static void usbCableDetectDeinit(void) { if (!irqDisabled || !usbReleasedForDebug) abort(); detectDeinitialized++; }
 static int usbd_deinitialize(int bus) { if (bus || !irqDisabled || !usbReleasedForDebug) abort(); deinitialized++; return 0; }
-static void RCC_HBPeriphClockCmd(int periph, int on) {
-    if (periph != RCC_HBPeriph_USBHS || on || usb.INT_EN || usb.CONTROL) abort(); clockDisabled++;
-}
-static void RCC_UTMIcmd(int on) { if (on || !clockDisabled) abort(); phyDisabled++; }
+static void RCC_UTMIcmd(int on) { if (on || usb.INT_EN || usb.CONTROL) abort(); phyDisabled++; }
 static void GPIO_PinRemapConfig(int remap, int on) {
     if (remap != GPIO_Remap_SWJ_Disable || on || !phyDisabled) abort(); remapped++;
 }

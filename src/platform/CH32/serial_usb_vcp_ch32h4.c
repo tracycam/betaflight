@@ -497,10 +497,11 @@ void ch32h415UsbReleaseForDebug(void)
     }
     USBHSD->INT_EN = 0;
     USBHSD->CONTROL = 0;
-    RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS, DISABLE);
     RCC_UTMIcmd(DISABLE);
-    /* USBHS and SWCLK/SWDIO share PB8/PB9. Do not stop USBHS PLL: the
-     * bootloader may have selected it as the shared system clock source. */
+    /* USBHS and SWCLK/SWDIO share PB8/PB9. Leave the USBHS peripheral clock
+     * on: on H415, gating it also makes the WCH debug interface inaccessible.
+     * The controller is disabled above, and the PHY is powered down. Do not
+     * stop USBHS PLL: it may be the shared system clock source. */
     GPIO_PinRemapConfig(GPIO_Remap_SWJ_Disable, DISABLE);
     __asm volatile("fence iorw, iorw" ::: "memory");
 }
