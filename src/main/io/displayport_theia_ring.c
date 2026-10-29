@@ -163,7 +163,7 @@ static bool sendScreen(theiaProducer_t *p)
     p->dirty = false; p->seenResync = resync;
     return true;
 }
-bool theiaProducerDraw(theiaProducer_t *p)
+void theiaProducerCommit(theiaProducer_t *p)
 {
     if (p->staged) {
         if (memcmp(p->committed, p->cells, sizeof(p->committed))) {
@@ -173,7 +173,49 @@ bool theiaProducerDraw(theiaProducer_t *p)
         p->staged = false;
     }
     p->released = false;
+}
+bool theiaProducerDraw(theiaProducer_t *p)
+{
+    theiaProducerCommit(p);
     return sendScreen(p);
+}
+
+bool theiaProducerPollHealth(theiaProducer_t *p, uint32_t nowUs)
+{
+    if (!theiaProducerReady(p)) {
+        p->healthPending = p->healthOnline = false;
+        p->wasReady = false; p->dirty = true;
+        return false;
+    }
+
+    if (p->healthPending) {
+        const uint32_t read = *p->mailbox.readPos;
+        acquire(); /* Consumer releases the cursor after dispatch or resync. */
+        const uint32_t generation = *p->mailbox.resync;
+        if (generation != p->healthResync) {
+            p->healthPending = false; /* Discard cannot acknowledge a probe. */
+        } else if ((int32_t)(read - p->healthTarget) >= 0) {
+            p->healthPending = false;
+            p->healthOnline = true;
+            p->healthLastAck = nowUs;
+        }
+    }
+
+    if (p->healthOnline && (uint32_t)(nowUs - p->healthLastAck) >= THEIA_HEALTH_TIMEOUT_US) {
+        p->healthOnline = false;
+        p->wasReady = false; p->dirty = true;
+    }
+
+    if (!p->healthPending && (!p->healthOnline ||
+            (uint32_t)(nowUs - p->healthLastAck) >= THEIA_HEALTH_INTERVAL_US)) {
+        const uint32_t generation = *p->mailbox.resync;
+        if (command(p, 0)) {
+            p->healthTarget = *p->mailbox.writePos;
+            p->healthResync = generation;
+            p->healthPending = true;
+        }
+    }
+    return p->healthOnline;
 }
 bool theiaProducerHeartbeat(theiaProducer_t *p)
 {

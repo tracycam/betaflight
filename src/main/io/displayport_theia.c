@@ -28,7 +28,9 @@ static void geometry(displayPort_t *port)
 static int heartbeat(displayPort_t *port)
 {
     geometry(port);
-    (void)theiaProducerHeartbeat(&producer);
+    if (theiaProducerPollHealth(&producer, micros())) {
+        (void)theiaProducerHeartbeat(&producer);
+    }
     return 0;
 }
 static int grab(displayPort_t *port)
@@ -47,6 +49,10 @@ static int clearScreen(displayPort_t *port, displayClearOption_e options)
 static bool drawScreen(displayPort_t *port)
 {
     (void)port;
+    if (!theiaProducerPollHealth(&producer, micros())) {
+        theiaProducerCommit(&producer);
+        return false;
+    }
     /* BF true means more transfer work remains. Never block FC startup
      * on an absent/incompatible OSD image; retain the shadow for recovery. */
     bool sent = theiaProducerDraw(&producer);
@@ -87,7 +93,7 @@ static bool transfer(const displayPort_t *port)
 static bool synced(const displayPort_t *port)
 {
     (void)port;
-    return theiaProducerReady(&producer) && *producer.mailbox.resync == producer.seenResync &&
+    return producer.healthOnline && theiaProducerReady(&producer) && *producer.mailbox.resync == producer.seenResync &&
         !producer.dirty && !producer.staged;
 }
 static void redraw(displayPort_t *port)
@@ -139,7 +145,7 @@ static void cancelFontWrite(displayPort_t *port, int owner)
 }
 static bool ready(displayPort_t *port, bool rescan)
 {
-    (void)rescan; geometry(port); return theiaProducerReady(&producer);
+    (void)rescan; geometry(port); return theiaProducerPollHealth(&producer, micros());
 }
 static const displayPortVTable_t vtable = {
     .grab = grab, .release = release, .clearScreen = clearScreen, .drawScreen = drawScreen,

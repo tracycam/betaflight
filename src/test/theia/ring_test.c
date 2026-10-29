@@ -132,6 +132,45 @@ int main(void)
     assert(theiaProducerFontWrite(&producer, 1, glyph)); consume();
     assert(theiaProducerFontStatus(&producer) == THEIA_FONT_DONE);
 #endif
+    /* A probe needs actual consumer progress, not just RUNNING in the mailbox. */
+    writePos = readPos = resync = 0;
+    theiaProducerInit(&producer, &mailbox);
+    assert(!theiaProducerPollHealth(&producer, 0));
+    assert(producer.healthPending && writePos != readPos);
+    consume(); assert(theiaProducerPollHealth(&producer, 1));
+    assert(theiaProducerPollHealth(&producer, THEIA_HEALTH_INTERVAL_US + 1));
+    assert(producer.healthPending);
+    assert(!theiaProducerPollHealth(&producer, THEIA_HEALTH_TIMEOUT_US + 1));
+    assert(producer.dirty && !producer.wasReady);
+    consume(); assert(theiaProducerPollHealth(&producer, THEIA_HEALTH_TIMEOUT_US + 2));
+    assert(theiaProducerHeartbeat(&producer)); consume(); /* recovery republishes */
+
+    /* Discarded records never acknowledge a probe, even if the cursor advances. */
+    assert(theiaProducerPollHealth(&producer, THEIA_HEALTH_TIMEOUT_US + THEIA_HEALTH_INTERVAL_US + 2));
+    resync++; readPos = writePos;
+    assert(!theiaProducerPollHealth(&producer, 2 * THEIA_HEALTH_TIMEOUT_US + 2));
+    assert(producer.healthPending); consume();
+    assert(theiaProducerPollHealth(&producer, 2 * THEIA_HEALTH_TIMEOUT_US + 3));
+
+    /* Both monotonic cursor and BF time wrap remain safe. */
+    theiaProducerInit(&producer, &mailbox);
+    writePos = readPos = UINT32_MAX - 11u;
+    assert(!theiaProducerPollHealth(&producer, UINT32_MAX - 100u));
+    consume(); assert(theiaProducerPollHealth(&producer, UINT32_MAX - 99u));
+    assert(theiaProducerPollHealth(&producer, THEIA_HEALTH_INTERVAL_US));
+    assert(!theiaProducerPollHealth(&producer, THEIA_HEALTH_TIMEOUT_US));
+    consume(); assert(theiaProducerPollHealth(&producer, THEIA_HEALTH_TIMEOUT_US + 1));
+    /* A full ring prevents new probes; a stale last ACK still expires. */
+    readPos = writePos - H415C_SHRAM_DP_RING_SIZE;
+    assert(theiaProducerPollHealth(&producer, THEIA_HEALTH_TIMEOUT_US + THEIA_HEALTH_INTERVAL_US + 1));
+    assert(!producer.healthPending);
+    assert(!theiaProducerPollHealth(&producer, 2 * THEIA_HEALTH_TIMEOUT_US + 1));
+    readPos = writePos;
+    assert(!theiaProducerPollHealth(&producer, 2 * THEIA_HEALTH_TIMEOUT_US + 2));
+    consume(); assert(theiaProducerPollHealth(&producer, 2 * THEIA_HEALTH_TIMEOUT_US + 3));
+    abiVersion = 2;
+    assert(!theiaProducerPollHealth(&producer, 2 * THEIA_HEALTH_TIMEOUT_US + 4));
+    assert(!producer.healthPending && !producer.healthOnline);
     puts(
-        "THEIA ABI4: atomic screen, unchanged DRAW, backpressure, resync, exact font completion, retry, cancel/late ACK and seq wrap pass");
+        "THEIA ABI4: screen, resync, font and heartbeat acknowledgement/recovery pass");
 }
