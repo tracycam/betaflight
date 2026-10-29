@@ -281,6 +281,24 @@ run('adc_no_dma',pre+fn(ac,'void adcInit(')+fn(ac,'bool adcInternalIsBusy(')+fn(
 int main(void){setbuf(stdout,NULL);adcConfig_t c={.dmaopt={-1,-1}};adcInit(&c);uint16_t raw=adcInternalRead(ADC_VREFINT);printf("DMA opt=%d conversions started=%d vref enabled=%d busy=%d raw=%u\\n",c.dmaopt[0],conversion_started,adcOperatingConfig[ADC_VREFINT].enabled,adcInternalIsBusy(),raw);printf("vref=%u\\n",adcInternalCompensateVref(raw));}
 ''')
 
+run('adc_internal_init_timeout', '''
+#define ADC_INTERNAL_INIT_TIMEOUT_US 10000u
+typedef uint32_t timeUs_t;
+static uint32_t now, processed;
+static bool unavailable;
+static timeUs_t micros(void) { return now += 100; }
+static bool adcInternalIsBusy(void) { return unavailable; }
+static void adcInternalProcess(timeUs_t unused) { (void)unused; processed++; }
+''' + fn('src/main/sensors/adcinternal.c','void adcInternalInit(') + '''
+int main(void) {
+    unavailable = true; adcInternalInit();
+    if (processed || now > 10200) return 1;
+    unavailable = false; now = 0; adcInternalInit();
+    if (processed != 9) return 2;
+    return 0;
+}
+''')
+
 ic='src/platform/CH32/bus_i2c_ch32h41x.c'
 pre='''
 #define I2CINVALID -1
