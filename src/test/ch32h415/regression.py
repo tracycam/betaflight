@@ -354,6 +354,32 @@ int main(void) {
 }
 ''')
 
+run('theia_msp_osd_flags', '''
+#define OSD_FLAGS_OSD_FEATURE (1 << 0)
+#define OSD_FLAGS_OSD_HARDWARE_FRSKYOSD (1 << 3)
+#define OSD_FLAGS_OSD_HARDWARE_MAX_7456 (1 << 4)
+#define OSD_FLAGS_OSD_DEVICE_DETECTED (1 << 5)
+#define OSD_FLAGS_OSD_MSP_DEVICE (1 << 6)
+#define OSD_FLAGS_OSD_HARDWARE_AIRBOT_THEIA_OSD (1 << 7)
+#define OSD_FLAGS_OSD_HARDWARE_FB_OSD (1 << 4)
+#define ENABLE_FB_OSD 1
+#define USE_MSP_DISPLAYPORT_FONT
+typedef enum { OSD_DISPLAYPORT_DEVICE_NONE, OSD_DISPLAYPORT_DEVICE_THEIA,
+ OSD_DISPLAYPORT_DEVICE_MAX7456, OSD_DISPLAYPORT_DEVICE_FRSKYOSD,
+ OSD_DISPLAYPORT_DEVICE_MSP, OSD_DISPLAYPORT_DEVICE_FBOSD } osdDisplayPortDevice_e;
+''' + fn('src/main/msp/msp.c', 'static uint8_t mspOsdFlags(') + '''
+int main(void) {
+    if (mspOsdFlags(OSD_DISPLAYPORT_DEVICE_THEIA, true) != 0x31) return 1;
+    if (mspOsdFlags(OSD_DISPLAYPORT_DEVICE_THEIA, false) != 0x11) return 2;
+    if (mspOsdFlags(OSD_DISPLAYPORT_DEVICE_NONE, true) != 0x01) return 3;
+    if (mspOsdFlags(OSD_DISPLAYPORT_DEVICE_MAX7456, true) != 0x31) return 4;
+    if (mspOsdFlags(OSD_DISPLAYPORT_DEVICE_FRSKYOSD, true) != 0x29) return 5;
+    if (mspOsdFlags(OSD_DISPLAYPORT_DEVICE_MSP, true) != 0xe1) return 6;
+    if (mspOsdFlags(OSD_DISPLAYPORT_DEVICE_FBOSD, false) != 0x11) return 7;
+    return 0;
+}
+''')
+
 ic='src/platform/CH32/bus_i2c_ch32h41x.c'
 pre='''
 #define I2CINVALID -1
