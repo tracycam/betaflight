@@ -28,7 +28,13 @@
 #include "drivers/nvic.h"
 #include "drivers/system.h"
 #include "drivers/persistent.h"
+#include "drivers/usb_io.h"
 #include "ch32_debug.h"
+
+#ifndef USE_VCP
+bool usbCableIsInserted(void) { return false; }
+bool usbCableIsActive(void) { return false; }
+#endif
 
 
 void systemReset(void)
@@ -63,11 +69,12 @@ void enableGPIOPowerUsageAndNoiseReductions(void)
     RCC_HBPeriphClockCmd(    \
         RCC_HBPeriph_DMA1 |  \
         RCC_HBPeriph_DMA2 |  \
-        RCC_HBPeriph_USBHS |  \
-        RCC_HBPeriph_OTG_FS |  \
         RCC_HBPeriph_PIOC |  \
         0, ENABLE             \
         );
+#ifdef USE_VCP
+    RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS | RCC_HBPeriph_OTG_FS, ENABLE);
+#endif
     RCC_HB1PeriphClockCmd(    \
         RCC_HB1Periph_TIM2 |  \
         RCC_HB1Periph_TIM3 |  \

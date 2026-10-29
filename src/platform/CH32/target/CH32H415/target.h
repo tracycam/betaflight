@@ -36,8 +36,13 @@
 #endif
 
 
+#ifndef CH32H415_NO_USB
 #define USE_VCP
 #define USE_USB_DETECT
+#else
+#undef USE_VCP
+#undef USE_USB_DETECT
+#endif
 #undef USE_USB_MSC
 
 #define USE_UART1
