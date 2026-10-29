@@ -1,6 +1,6 @@
 /* Host test of the exact BF producer; no emulated producer implementation. */
 #include "io/displayport_theia_ring.h"
-#include "io/displayport_theia_abi.h"
+#include "io/h415_contract.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>

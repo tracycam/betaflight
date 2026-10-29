@@ -9,7 +9,7 @@
 #include "drivers/time.h"
 #include "fc/runtime_config.h"
 #include "io/displayport_theia.h"
-#include "io/displayport_theia_abi.h"
+#include "io/h415_contract.h"
 #include "io/displayport_theia_ring.h"
 
 static displayPort_t display;

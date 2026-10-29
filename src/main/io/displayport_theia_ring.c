@@ -2,7 +2,7 @@
  * A screen is reserved and published as one CLEAR/WRITE/DRAW batch. */
 #include "platform.h"
 #include "io/displayport_theia_ring.h"
-#include "io/displayport_theia_abi.h"
+#include "io/h415_contract.h"
 #include <string.h>
 
 #define MASK (H415C_SHRAM_DP_RING_SIZE - 1u)
