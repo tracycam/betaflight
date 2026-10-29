@@ -419,6 +419,9 @@ run('usb_sdi_handoff', '''
 #define USBHS_IRQn 1
 #define RCC_HBPeriph_USBHS 2
 #define GPIO_Remap_SWJ_Disable 3
+#define USBHS_UD_RST_LINK 1
+#define USBHS_UD_RST_SIE 2
+#define USBHS_UD_CLR_ALL 4
 #define DISABLE 0
 typedef struct { unsigned INT_EN, CONTROL; } usb_t;
 static usb_t usb;
@@ -428,7 +431,7 @@ static unsigned irqDisabled, deinitialized, phyDisabled, remapped, detectDeiniti
 static void NVIC_DisableIRQ(int n) { if (n != USBHS_IRQn) abort(); irqDisabled++; }
 static void usbCableDetectDeinit(void) { if (!irqDisabled || !usbReleasedForDebug) abort(); detectDeinitialized++; }
 static int usbd_deinitialize(int bus) { if (bus || !irqDisabled || !usbReleasedForDebug) abort(); deinitialized++; return 0; }
-static void RCC_UTMIcmd(int on) { if (on || usb.INT_EN || usb.CONTROL) abort(); phyDisabled++; }
+static void RCC_UTMIcmd(int on) { if (on || usb.INT_EN || usb.CONTROL != 7) abort(); phyDisabled++; }
 static void GPIO_PinRemapConfig(int remap, int on) {
     if (remap != GPIO_Remap_SWJ_Disable || on || !phyDisabled) abort(); remapped++;
 }

@@ -496,11 +496,14 @@ void ch32h415UsbReleaseForDebug(void)
         usbCoreInitialized = false;
     }
     USBHSD->INT_EN = 0;
-    USBHSD->CONTROL = 0;
+    /* Hold the link and SIE in reset, and clear pending USB state. H415
+     * shares these pads with SDI; CONTROL=0 leaves SDI inaccessible after
+     * a real USB initialization even when SW_CFG has been restored. */
+    USBHSD->CONTROL = USBHS_UD_RST_LINK | USBHS_UD_RST_SIE | USBHS_UD_CLR_ALL;
     RCC_UTMIcmd(DISABLE);
     /* USBHS and SWCLK/SWDIO share PB8/PB9. Leave the USBHS peripheral clock
      * on: on H415, gating it also makes the WCH debug interface inaccessible.
-     * The controller is disabled above, and the PHY is powered down. Do not
+     * The controller is held in reset above and the PHY is suspended. Do not
      * stop USBHS PLL: it may be the shared system clock source. */
     GPIO_PinRemapConfig(GPIO_Remap_SWJ_Disable, DISABLE);
     __asm volatile("fence iorw, iorw" ::: "memory");
