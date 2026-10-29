@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Config preservation and malformed-image checks for H415 updates."""
 import importlib.util
+import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
 path = Path(__file__).resolve().parents[2] / "utils/ch32h415_split_image.py"
 spec = importlib.util.spec_from_file_location("split_image", path)
 module = importlib.util.module_from_spec(spec)
