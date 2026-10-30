@@ -26,6 +26,31 @@ def run(name,src,timeout=2,extra_flags=()):
   raise RuntimeError(f'{name}: failed with exit code {e.returncode}\n{e.stdout}{e.stderr}')
 
 pf='src/platform/CH32/include/platform/platform.h'
+run('micros_global_irq_disabled', '''
+#define CH32H4
+typedef struct { uint32_t GISR; } pfic_t;
+typedef struct { uint32_t CNT; } systick_t;
+static pfic_t pfic;
+static systick_t tick;
+#define PFIC (&pfic)
+#define SysTick1 (&tick)
+static volatile uint32_t sysTickUptime, sysTickValStamp;
+static uint32_t usTicks=350;
+static bool irqEnabled;
+static uint32_t __get_BASEPRI(void) { return 0; }
+static bool ch32GlobalInterruptsEnabled(void) { return irqEnabled; }
+static uint32_t microsISR(void) { return 1234; }
+''' + fn('src/platform/common/stm32/system.c','uint32_t micros(void)') + '''
+int main(void) {
+    tick.CNT=200;
+    if (micros() != 1234) return 1;
+    irqEnabled=true;
+    sysTickValStamp=349999;
+    tick.CNT=175000;
+    if (micros() != 500) return 2;
+    puts("global masking uses the non-spinning path; first tick returns normally");
+}
+''')
 run('exti_unregistered', '''
 typedef struct extiCallbackRec_s extiCallbackRec_t;
 struct extiCallbackRec_s { void (*fn)(extiCallbackRec_t *); };

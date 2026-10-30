@@ -24,6 +24,7 @@
 
 #if defined(CH32H415)
 
+#include <stdbool.h>
 
 #include "ch32h417.h"
 #include "ch32_debug.h"
@@ -87,6 +88,13 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 
 // QingKe global interrupt enable is in CSR 0x800. Save and clear both
 // enable bits atomically, then restore only those that were originally set.
+__attribute__((always_inline)) static inline bool ch32GlobalInterruptsEnabled(void)
+{
+    uint32_t state;
+    asm volatile ("csrr %0, 0x800" : "=r" (state) : : "memory");
+    return (state & 0x08u) != 0;
+}
+
 __attribute__((always_inline)) static inline uint32_t ch32IrqSave(void)
 {
     uint32_t state;

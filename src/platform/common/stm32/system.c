@@ -60,6 +60,7 @@ void cycleCounterInit(void)
     cpuClockFrequency = HCLKClock;
     usTicks = HCLKClock / 1000000;
     usTicksInv = 1e6f / cpuClockFrequency;
+    sysTickValStamp = HCLKClock / 1000 - 1;
 
     asm volatile ("csrw mucounteren, %0" : : "r" (0x5));
     asm volatile ("csrw mcycle, %0" : : "r" (0));
@@ -185,7 +186,7 @@ uint32_t micros(void)
     register uint32_t ms, cycle_cnt;
 
 #if defined(CH32H4)
-    if ((PFIC->GISR & 0xFF) || (__get_BASEPRI())) {
+    if ((PFIC->GISR & 0xFF) || (__get_BASEPRI()) || !ch32GlobalInterruptsEnabled()) {
         return microsISR();
     }
 
