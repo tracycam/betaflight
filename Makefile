@@ -878,6 +878,7 @@ targets-ci-grouped-print:
 			family=$$(grep -m1 'TARGET_MCU_FAMILY[[:space:]]*:=' "$$f" | sed 's/.*:=[[:space:]]*//'); \
 			[ -n "$$family" ] && echo "TARGET $$target $$family"; \
 		done; \
+		$(foreach alias,$(filter CONFIG_MCU_ALIAS_%,$(.VARIABLES)),echo "ALIAS $(patsubst CONFIG_MCU_ALIAS_%,%,$(alias)) $($(alias))";) \
 		for t in $(CI_TARGETS); do \
 			config_h="$(CONFIG_DIR)/configs/$$t/config.h"; \
 			if [ ! -f "$$config_h" ]; then \
@@ -897,11 +898,12 @@ targets-ci-grouped-print:
 	) | awk ' \
 		/^FAMILY/ { family_sdk[$$2] = $$3 } \
 		/^TARGET/ { target_family[$$2] = $$3 } \
+		/^ALIAS/ { mcu_alias[$$2] = $$3 } \
 		/^CONFIG/ { config_target[$$2] = $$3 } \
 		/^CI/ { \
 			t = $$2; \
 			family = target_family[t]; \
-			if (family == "") { mcu = config_target[t]; family = target_family[mcu] } \
+			if (family == "") { mcu = config_target[t]; if (mcu in mcu_alias) mcu = mcu_alias[mcu]; family = target_family[mcu] } \
 			sdk = family_sdk[family]; \
 			if (sdk == "") { \
 				printf("Unable to resolve PLATFORM_SDK for CI target %s (family=%s)\n", t, family) > "/dev/stderr"; \
