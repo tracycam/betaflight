@@ -93,6 +93,16 @@ int main(void) {
 host_include=out/'include'
 host_include.mkdir(exist_ok=True)
 (host_include/'platform.h').write_text('/* The host tests supply simulated peripherals. */\n')
+run('priority_saturation', '''
+#include "platform/priority.h"
+int main(void) {
+    for (unsigned base=0; base<32; base++) {
+        const unsigned expected = ((base > 3 ? 3 : base) << 6) | 0x20;
+        if (NVIC_BUILD_PRIORITY(base, 0) != expected) return 1;
+    }
+    puts("out-of-range priority groups saturate at the lowest group");
+}
+''', extra_flags=('-Wall','-Wextra','-I'+str(root/'src/platform/CH32/include')))
 run('dma_flag_masks', '''
 typedef struct { uint32_t INTFR, INTFCR; } DMA_TypeDef;
 typedef struct { DMA_TypeDef *dma; unsigned flagsShift; } descriptor_t;
