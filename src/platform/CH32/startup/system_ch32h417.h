@@ -28,6 +28,3 @@ extern void SystemAndCoreClockUpdate(void);
 }
 #endif
 #endif
-
-
-

@@ -44,7 +44,7 @@ SECTIONS
     {
         . = ALIGN(4);
         tcm_code_start = .;
-		/* Code that must be placed in the ITCM area */		
+		/* Code that must be placed in the ITCM area */
 		*(.vector);
 		KEEP(*(SORT_NONE(.vector_handler)))
         *(.tcm_code)
@@ -58,7 +58,7 @@ SECTIONS
          * CMS/CLI/OSD code already falls through to SRAM below. */
         obj/main/CH32H415*/io/*.o(EXCLUDE_FILE (*displayport*.o *rcdevice*.o *vtx*.o *smartaudio_protocol.o *tramp_protocol.o) .text*)
 		obj/main/CH32H415*/config/*.o(.text .text.*)
-		obj/main/CH32H415*/pg/*.o(.text .text.*) 
+		obj/main/CH32H415*/pg/*.o(.text .text.*)
 		obj/main/CH32H415*/build/*.o(.text .text.*)
 		obj/main/CH32H415*/common/*.o(.text .text.*)
 		obj/main/CH32H415*/common/stm32/*.o(.text .text.*)
@@ -66,9 +66,9 @@ SECTIONS
 		obj/main/CH32H415*/drivers/accgyro/*.o(.text .text.*)
 		obj/main/CH32H415*/drivers/barometer/*.o(.text .text.*)
 		obj/main/CH32H415*/drivers/compass/*.o(.text .text.*)
-		obj/main/CH32H415*/drivers/flash/*.o(.text .text.*) 
+		obj/main/CH32H415*/drivers/flash/*.o(.text .text.*)
 		obj/main/CH32H415*/drivers/opticalflow/*.o(.text .text.*)
-		obj/main/CH32H415*/drivers/rangefinder/*.o(.text .text.*)		
+		obj/main/CH32H415*/drivers/rangefinder/*.o(.text .text.*)
 		obj/main/CH32H415*/drivers/rx/*.o(.text .text.*)
 		obj/main/CH32H415*/scheduler/*.o(.text .text.*)
 		obj/main/CH32H415*/sensors/*.o(.text .text.*)
@@ -92,10 +92,10 @@ SECTIONS
         *(.ram_code*)
         *(.text)
         *(.text.*)
-		
+
 		*(.rodata)
 		*(.rodata*)
-        
+
 		. = ALIGN(4);
         ram_code_end = .;
     } >SRAM AT >MOVABLE_FLASH
@@ -103,17 +103,17 @@ SECTIONS
     .text :
 	{
 		. = ALIGN(4);
-/*		
+/*
 		*(.text)
 		*(.text.*)
 */
 /*
 		*(.rodata)
 		*(.rodata*)
-*/		
+*/
 		*(.gnu.linkonce.t.*)
 		. = ALIGN(4);
-	} >FLASH1 AT>MOVABLE_FLASH 
+	} >FLASH1 AT>MOVABLE_FLASH
 
 	.fini :
 	{
@@ -126,24 +126,24 @@ SECTIONS
 	  PROVIDE_HIDDEN (__preinit_array_start = .);
 	  KEEP (*(.preinit_array))
 	  PROVIDE_HIDDEN (__preinit_array_end = .);
-	} >FLASH1 AT>MOVABLE_FLASH 
-	
+	} >FLASH1 AT>MOVABLE_FLASH
+
 	.init_array     :
 	{
 	  PROVIDE_HIDDEN (__init_array_start = .);
 	  KEEP (*(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*)))
 	  KEEP (*(.init_array EXCLUDE_FILE (*crtbegin.o *crtbegin?.o *crtend.o *crtend?.o ) .ctors))
 	  PROVIDE_HIDDEN (__init_array_end = .);
-	} >FLASH1 AT>MOVABLE_FLASH 
-	
+	} >FLASH1 AT>MOVABLE_FLASH
+
 	.fini_array     :
 	{
 	  PROVIDE_HIDDEN (__fini_array_start = .);
 	  KEEP (*(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*)))
 	  KEEP (*(.fini_array EXCLUDE_FILE (*crtbegin.o *crtbegin?.o *crtend.o *crtend?.o ) .dtors))
 	  PROVIDE_HIDDEN (__fini_array_end = .);
-	} >FLASH1 AT>MOVABLE_FLASH 
-	
+	} >FLASH1 AT>MOVABLE_FLASH
+
   .pg_registry :
   {
 	. = ALIGN(4);
@@ -182,8 +182,8 @@ SECTIONS
 	  KEEP (*(EXCLUDE_FILE (*crtend.o *crtend?.o ) .ctors))
 	  KEEP (*(SORT(.ctors.*)))
 	  KEEP (*(.ctors))
-	} >FLASH1 AT>MOVABLE_FLASH 
-	
+	} >FLASH1 AT>MOVABLE_FLASH
+
 	.dtors          :
 	{
 	  KEEP (*crtbegin.o(.dtors))
@@ -191,10 +191,10 @@ SECTIONS
 	  KEEP (*(EXCLUDE_FILE (*crtend.o *crtend?.o ) .dtors))
 	  KEEP (*(SORT(.dtors.*)))
 	  KEEP (*(.dtors))
-	} >FLASH1 AT>MOVABLE_FLASH 
+	} >FLASH1 AT>MOVABLE_FLASH
 
 
-   _sfastram_idata = LOADADDR(.fastram_data);   
+   _sfastram_idata = LOADADDR(.fastram_data);
     .fastram_data :
     {
         . = ALIGN(4);
@@ -224,21 +224,21 @@ SECTIONS
 		. = ALIGN(4);
         PROVIDE(_data_vma = .);
 		KEEP(*(.region_section))
-    	*(.gnu.linkonce.r.*)
-    	*(.data .data.*)
-    	*(.gnu.linkonce.d.*)
+        *(.gnu.linkonce.r.*)
+        *(.data .data.*)
+        *(.gnu.linkonce.d.*)
 		. = ALIGN(8);
-    	PROVIDE( __global_pointer$ = . + 0x800 );
-    	*(.sdata .sdata.*)
+        PROVIDE( __global_pointer$ = . + 0x800 );
+        *(.sdata .sdata.*)
 		*(.sdata2.*)
-    	*(.gnu.linkonce.s.*)
-    	. = ALIGN(8);
-    	*(.srodata.cst16)
-    	*(.srodata.cst8)
-    	*(.srodata.cst4)
-    	*(.srodata.cst2)
-    	*(.srodata .srodata.*)
-    	. = ALIGN(4);
+        *(.gnu.linkonce.s.*)
+        . = ALIGN(8);
+        *(.srodata.cst16)
+        *(.srodata.cst8)
+        *(.srodata.cst4)
+        *(.srodata.cst2)
+        *(.srodata .srodata.*)
+        . = ALIGN(4);
 		PROVIDE( _edata = .);
 		PROVIDE( _dtcm_end = .);
 	} >RAM AT>MOVABLE_FLASH
@@ -255,12 +255,12 @@ SECTIONS
     .bss (NOLOAD) :
 	{
 		. = ALIGN(4);
-		
+
         __bss_start__ = _sbss;
-  	    *(.sbss*)
+            *(.sbss*)
         *(.gnu.linkonce.sb.*)
 		*(.bss*)
-     	*(.gnu.linkonce.b.*)		
+        *(.gnu.linkonce.b.*)
 		*(COMMON*)
 		. = ALIGN(4);
 		PROVIDE( _ebss = .);
@@ -272,20 +272,15 @@ SECTIONS
 
     /* _eusrstack = ORIGIN(STACKRAM) + LENGTH(STACKRAM) - _Hot_Reboot_Flags_Size;
     _heap_stack_begin = _heap_stack_end - _Min_Stack_Size  - _Min_Heap_Size; */
- 
+
     .stack ORIGIN(STACKRAM) + LENGTH(STACKRAM) - _Hot_Reboot_Flags_Size - _Min_Stack_Size:
     {
-        PROVIDE( _heap_end = . );    
+        PROVIDE( _heap_end = . );
         . = ALIGN(4);
         PROVIDE(_susrstack = . );
         . = . + _Min_Stack_Size;
         PROVIDE( _eusrstack = .);
-    } >STACKRAM 
+    } >STACKRAM
 
 
 }
-
-
-
-
-

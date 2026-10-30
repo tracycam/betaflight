@@ -113,4 +113,3 @@ void SystemAndCoreClockUpdate(void)
         SystemCoreClock = tmp3;
     }
 }
-

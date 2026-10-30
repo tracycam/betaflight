@@ -27,4 +27,3 @@
 #define MAX_TIMER_DMA_OPTIONS       22
 
 #define USE_DMA_MUX
-

@@ -167,7 +167,7 @@ MCU_COMMON_SRC = \
         common/stm32/adc_impl.c \
         common/stm32/expresslrs_driver_hw.c \
         common/stm32/fault_handlers.c
-        
+
 #         \
 #         msc/usbd_storage_sd_spi.c
 
