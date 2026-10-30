@@ -126,12 +126,16 @@ static uint8_t flash[16384] __attribute__((aligned(8192)));
 static uint32_t flashMode;
 #define FLASH_CFGR0_BASE ((uintptr_t)&flashMode)
 static unsigned erases, writes, eraseStep;
+static bool suppressWrite;
 static FLASH_Status FLASH_ErasePage(uintptr_t addr) {
     if (addr != (uintptr_t)flash + erases * eraseStep) return FLASH_ERROR;
     erases++;
     return FLASH_COMPLETE;
 }
-static void FLASH_ProgramPage_Fast(uintptr_t addr, uint32_t *buf) { (void)addr; (void)buf; writes++; }
+static void FLASH_ProgramPage_Fast(uintptr_t addr, uint32_t *buf) {
+    if (!suppressWrite) memcpy((void *)addr, buf, CONFIG_STREAMER_BUFFER_SIZE);
+    writes++;
+}
 static FLASH_Status FLASH_GetStatus(void) { return FLASH_COMPLETE; }
 ''' + fn('src/platform/common/stm32/config_flash.c','static bool ch32ConfigAddressIsValid(')
     + fn('src/platform/common/stm32/config_flash.c','configStreamerResult_e configWriteWord(') + '''
@@ -149,7 +153,11 @@ int main(void) {
             if (configWriteWord((uintptr_t)flash+offset, buffer) != CONFIG_RESULT_SUCCESS) return 5;
         if (erases != sizeof(flash)/eraseStep || writes != sizeof(flash)/256) return 6;
     }
-    puts("single/dual erase geometry and configuration boundaries");
+    memset(flash, 0xff, 256);
+    suppressWrite=true;
+    erases=0;
+    if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_FAILURE) return 7;
+    puts("single/dual erase geometry, boundaries and silent write failure");
 }
 ''')
 run('pfic', '#define PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL\n#include "platform/priority.h"\nstatic volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'

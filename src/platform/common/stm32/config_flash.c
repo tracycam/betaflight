@@ -656,6 +656,10 @@ configStreamerResult_e configWriteWord(uintptr_t address, config_streamer_buffer
     if (status != FLASH_COMPLETE) {
         return CONFIG_RESULT_ADDRESS_INVALID;
     }
+    // A locked fast-program controller can ignore writes without setting an error.
+    if (memcmp((const void *)address, buffer, CONFIG_STREAMER_BUFFER_SIZE) != 0) {
+        return CONFIG_RESULT_FAILURE;
+    }
 #else
 #error "MCU not catered for in configWriteWord for config_streamer"
 #endif
