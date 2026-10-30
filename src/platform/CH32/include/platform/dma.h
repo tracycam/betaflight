@@ -106,8 +106,8 @@ uint32_t dmaGetChannel(const uint8_t channel);
             handler(&dmaDescriptors[index]); }                                         \
     }
 
-#define DMA_CLEAR_FLAG(d, flag)  ((DMA_TypeDef *)(d)->dma)->INTFCR = (flag << d->flagsShift)
-#define DMA_GET_FLAG_STATUS(d, flag) (((DMA_TypeDef *)(d)->dma)->INTFR & (flag << d->flagsShift))
+#define DMA_CLEAR_FLAG(d, flag) (((DMA_TypeDef *)((d)->dma))->INTFCR = ((uint32_t)(flag) << (d)->flagsShift))
+#define DMA_GET_FLAG_STATUS(d, flag) (((DMA_TypeDef *)((d)->dma))->INTFR & ((uint32_t)(flag) << (d)->flagsShift))
 #define DMA_IT_GLOB ((uint32_t)0x00000001) // channel global interput flag
 #define DMA_IT_TCIF ((uint32_t)0x00000002) // channel full transport flag
 #define DMA_IT_HTIF ((uint32_t)0x00000004) // channel half transport flag

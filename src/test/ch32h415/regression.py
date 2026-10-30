@@ -29,6 +29,24 @@ pf='src/platform/CH32/include/platform/platform.h'
 host_include=out/'include'
 host_include.mkdir(exist_ok=True)
 (host_include/'platform.h').write_text('/* The host tests supply simulated peripherals. */\n')
+run('dma_flag_masks', '''
+typedef struct { uint32_t INTFR, INTFCR; } DMA_TypeDef;
+typedef struct { DMA_TypeDef *dma; unsigned flagsShift; } descriptor_t;
+#include "platform/dma.h"
+int main(void) {
+    DMA_TypeDef regs = {0};
+    descriptor_t descriptors[2] = {{&regs, 0}, {&regs, 0}};
+    for (unsigned channel = 0; channel < 8; channel++) {
+        descriptors[1].flagsShift = channel * 4;
+        const uint32_t expected = (DMA_IT_HTIF | DMA_IT_TEIF | DMA_IT_TCIF) << descriptors[1].flagsShift;
+        DMA_CLEAR_FLAG(&descriptors[1], DMA_IT_HTIF | DMA_IT_TEIF | DMA_IT_TCIF);
+        if (regs.INTFCR != expected) return 1;
+        regs.INTFR = expected;
+        if (DMA_GET_FLAG_STATUS(&descriptors[1], DMA_IT_HTIF | DMA_IT_TEIF | DMA_IT_TCIF) != expected) return 2;
+    }
+    puts("combined flags target the selected channel");
+}
+''', extra_flags=('-Wall','-Wextra','-I'+str(host_include),'-I'+str(root/'src/main'),'-I'+str(root/'src/platform/CH32/include')))
 run('pfic', '#define PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL\n#include "platform/priority.h"\nstatic volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'
     +fn(pf,'__attribute__((always_inline)) static inline uint32_t __get_BASEPRI')
     +fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_nb')
