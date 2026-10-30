@@ -113,6 +113,45 @@ int main(void) {
     puts("bit 31 and reset enable semantics");
 }
 ''')
+run('ch32_config_flash_bounds', '''
+#define CH32H4
+#define CONFIG_STREAMER_BUFFER_SIZE 256
+#define STATIC_ASSERT(c, m) _Static_assert(c, m)
+typedef uint32_t config_streamer_buffer_type_t;
+typedef enum { CONFIG_RESULT_SUCCESS=0, CONFIG_RESULT_FAILURE=-1, CONFIG_RESULT_ADDRESS_INVALID=-3 } configStreamerResult_e;
+typedef enum { FLASH_COMPLETE, FLASH_ERROR } FLASH_Status;
+static uint8_t flash[16384] __attribute__((aligned(8192)));
+#define __config_start flash[0]
+#define __config_end flash[16384]
+static uint32_t flashMode;
+#define FLASH_CFGR0_BASE ((uintptr_t)&flashMode)
+static unsigned erases, writes, eraseStep;
+static FLASH_Status FLASH_ErasePage(uintptr_t addr) {
+    if (addr != (uintptr_t)flash + erases * eraseStep) return FLASH_ERROR;
+    erases++;
+    return FLASH_COMPLETE;
+}
+static void FLASH_ProgramPage_Fast(uintptr_t addr, uint32_t *buf) { (void)addr; (void)buf; writes++; }
+static FLASH_Status FLASH_GetStatus(void) { return FLASH_COMPLETE; }
+''' + fn('src/platform/common/stm32/config_flash.c','static bool ch32ConfigAddressIsValid(')
+    + fn('src/platform/common/stm32/config_flash.c','configStreamerResult_e configWriteWord(') + '''
+int main(void) {
+    uint32_t buffer[64]={0};
+    for (int dual=0; dual<2; dual++) {
+        erases=writes=0;
+        flashMode=dual ? 1u<<28 : 0;
+        eraseStep=dual ? 8192 : 4096;
+        if (configWriteWord((uintptr_t)flash-256, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 1;
+        if (configWriteWord((uintptr_t)flash+sizeof(flash), buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 2;
+        if (configWriteWord((uintptr_t)flash+1, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 3;
+        if (configWriteWord(UINTPTR_MAX-127, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 4;
+        for (unsigned offset=0; offset<sizeof(flash); offset+=256)
+            if (configWriteWord((uintptr_t)flash+offset, buffer) != CONFIG_RESULT_SUCCESS) return 5;
+        if (erases != sizeof(flash)/eraseStep || writes != sizeof(flash)/256) return 6;
+    }
+    puts("single/dual erase geometry and configuration boundaries");
+}
+''')
 run('pfic', '#define PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL\n#include "platform/priority.h"\nstatic volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'
     +fn(pf,'__attribute__((always_inline)) static inline uint32_t __get_BASEPRI')
     +fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_nb')

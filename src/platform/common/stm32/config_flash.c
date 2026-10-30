@@ -368,6 +368,19 @@ static configStreamerResult_e x32EraseFlashIfNeeded(uintptr_t address)
 }
 #endif
 
+#if defined(CH32H4)
+static bool ch32ConfigAddressIsValid(uintptr_t address, uint32_t eraseSize)
+{
+    const uintptr_t start = (uintptr_t)&__config_start;
+    const uintptr_t end = (uintptr_t)&__config_end;
+
+    return start <= end && end - start >= CONFIG_STREAMER_BUFFER_SIZE &&
+        start % eraseSize == 0 && end % eraseSize == 0 &&
+        address % CONFIG_STREAMER_BUFFER_SIZE == 0 &&
+        address >= start && address <= end - CONFIG_STREAMER_BUFFER_SIZE;
+}
+#endif
+
 void configUnlock(void)
 {
 #if defined(STM32F7) || defined(STM32H7) || defined(STM32H5) || defined(STM32C5) || defined(STM32G4)
@@ -626,7 +639,12 @@ configStreamerResult_e configWriteWord(uintptr_t address, config_streamer_buffer
         return CONFIG_RESULT_ADDRESS_INVALID;
     }
 #elif defined(CH32H4)
-    if (address % FLASH_PAGE_SIZE == 0) {
+    // Erase sectors are 8 KiB in dual-flash mode and 4 KiB in single mode.
+    const uint32_t eraseSize = (*(volatile uint32_t *)FLASH_CFGR0_BASE & (1U << 28)) ? 0x2000U : 0x1000U;
+    if (!ch32ConfigAddressIsValid(address, eraseSize)) {
+        return CONFIG_RESULT_ADDRESS_INVALID;
+    }
+    if (address % eraseSize == 0) {
         const FLASH_Status status = FLASH_ErasePage(address);
         if (status != FLASH_COMPLETE) {
             return CONFIG_RESULT_FAILURE;
