@@ -801,7 +801,8 @@ void FLASH_ProgramPage_Fast(uint32_t Page_Address, uint32_t *pbuf)
         ;
     FLASH->CTLR &= ~CR_PAGE_PG;
 
-    __asm volatile ("csrw 0x800, %0" : : "r" (irqState) : "memory");
+    irqState &= 0x88u;
+    __asm volatile ("fence iorw, iorw\n\tcsrs 0x800, %0" : : "r" (irqState) : "memory");
 }
 
 /*********************************************************************
