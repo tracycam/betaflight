@@ -1020,34 +1020,91 @@ pre='''
 #define DMA_IT_TCIF 2
 #define DMA_IT_HTIF 4
 #define DMA_IT_TEIF 8
-#define USART_FLAG_TC 1
-#define USART_FLAG_RXNE 2
-#define USART_FLAG_TXE 4
-#define USART_FLAG_ORE 8
-#define USART_FLAG_IDLE 16
+#define USART_FLAG_TC 0x40
+#define USART_STATR_ORE 0x08
+#define USART_STATR_IDLE 0x10
+#define USART_STATR_RXNE 0x20
+#define USART_STATR_TC 0x40
+#define USART_STATR_TXE 0x80
+#define USART_CTLR1_IDLEIE 0x10
+#define USART_CTLR1_RXNEIE 0x20
+#define USART_CTLR1_TCIE 0x40
+#define USART_CTLR1_TXEIE 0x80
+#define CLEAR_BIT(reg,bit) ((reg)&=~(bit))
 #define ENABLE 1
 #define DISABLE 0
-#define SET 1
-#define RESET 0
-#define USART_IT_TXE USART_FLAG_TXE
 typedef struct {uint32_t CFGR,CNTR,MADDR;} dma_t;
-typedef struct {unsigned DATAR,STATR;} USART_TypeDef;
+typedef struct {uint32_t STATR,DATAR,BRR,CTLR1;} USART_TypeDef;
 #define IS_DMA_ENABLED(d) (((dma_t *)(d))->CFGR & 1)
 typedef struct {void *USARTx;dma_t *txDMAResource,*rxDMAResource;bool txDMAEmpty,txCompletePending;struct{uint8_t txBuffer[8];unsigned txBufferHead,txBufferTail,txBufferSize;uint8_t rxBuffer[8];unsigned rxBufferHead,rxBufferSize;void(*rxCallback)(uint32_t,void*);void*rxCallbackData;void(*idleCallback)(void);}port;} uartPort_t;
 typedef struct {uartPort_t port;} uartDevice_t;
-static unsigned usartFlags,monitorCalls;
-static unsigned USART_GetFlagStatus(USART_TypeDef *u,int flag){(void)u;return usartFlags&flag;}
-static void USART_ClearFlag(USART_TypeDef *u,int flag){(void)u;usartFlags&=~flag;}
-static void USART_ITConfig(USART_TypeDef *u,int flag,int state){(void)u;(void)flag;(void)state;}
-static void USART_SendData(USART_TypeDef *u,int data){(void)u;(void)data;}
+static unsigned monitorCalls,reads,received,receivedData,idleCalls,injectLate;
+static void fakeClearTC(USART_TypeDef *u) { u->STATR &= ~USART_STATR_TC; if (injectLate) { u->STATR |= USART_STATR_RXNE; u->DATAR=0x5a; } }
+static uint16_t fakeReadData(USART_TypeDef *u) { uint16_t data=u->DATAR; reads++; u->STATR &= ~(USART_STATR_IDLE|USART_STATR_RXNE|USART_STATR_ORE); return data; }
+static void onRx(uint32_t data,void *ctx) { (void)ctx; received++; receivedData=data; }
+static void onIdle(void) { idleCalls++; }
 static void uartTxMonitor(uartPort_t *p){(void)p;monitorCalls++;}
 '''
-run('uart_line_end_release',pre+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void uartTxMonitorIfComplete')+fn('src/platform/CH32/serial_uart_ch32bsp.c','FAST_IRQ_HANDLER void uartIrqHandler')+'''
-int main(void){USART_TypeDef usart={0};uartDevice_t d={.port={.USARTx=&usart,.txDMAResource=NULL,.rxDMAResource=NULL,.port={.txBufferHead=2,.txBufferTail=1,.txBufferSize=8}}};
- usartFlags=USART_FLAG_TC;uartIrqHandler(&d.port);if(monitorCalls)return 1;
- d.port.port.txBufferTail=d.port.port.txBufferHead;usartFlags=USART_FLAG_TC;uartIrqHandler(&d.port);return monitorCalls!=1;}
+uart_irq = fn('src/platform/CH32/serial_uart_ch32bsp.c','FAST_IRQ_HANDLER void uartIrqHandler').replace(
+    'USARTx->STATR = (uint16_t)~USART_STATR_TC;', 'fakeClearTC(USARTx);').replace(
+    'const uint16_t data = USARTx->DATAR;', 'const uint16_t data = fakeReadData(USARTx);')
+uart_rx = fn('src/platform/CH32/serial_uart_ch32bsp.c','static inline void uartStoreRxByte')
+run('uart_idle_registration', '''
+#include <stddef.h>
+#define USE_PLATFORM_UART_IDLE_CALLBACK
+#define NVIC_PRIO_SERIALUART1 0
+#define ATOMIC_BLOCK(x) for (int once=1; once; once=0)
+#define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
+#define USART_IT_IDLE 0x10
+#define ENABLE 1
+#define DISABLE 0
+#define MODE_RX 1
+typedef void (*serialIdleCallbackPtr)(void);
+typedef struct serialPort_s serialPort_t;
+struct vtable { void (*setIdleCallback)(serialPort_t *, serialIdleCallbackPtr); };
+struct serialPort_s { const struct vtable *vTable; serialIdleCallbackPtr idleCallback; int mode; };
+typedef struct { uint32_t CTLR1; } USART_TypeDef;
+typedef struct { serialPort_t port; void *USARTx, *rxDMAResource; } uartPort_t;
+static void USART_ITConfig(USART_TypeDef *u, int flag, int enabled) { if (enabled) u->CTLR1 |= flag; else u->CTLR1 &= ~flag; }
+''' + fn('src/platform/CH32/serial_uart_ch32bsp.c','void uartSetIdleCallback(')
+    + fn('src/main/drivers/serial.c','void serialSetIdleCallback(') + '''
+static void cb(void) {}
+int main(void) {
+    USART_TypeDef u={0}; static const struct vtable vt={uartSetIdleCallback}, plain={NULL};
+    uartPort_t p={.port={.vTable=&vt,.mode=MODE_RX},.USARTx=&u};
+    serialSetIdleCallback(&p.port,cb);
+    if (p.port.idleCallback!=cb || !(u.CTLR1 & USART_IT_IDLE)) return 1;
+    serialSetIdleCallback(&p.port,NULL);
+    if (p.port.idleCallback || (u.CTLR1 & USART_IT_IDLE)) return 2;
+    p.rxDMAResource=&u;serialSetIdleCallback(&p.port,cb);
+    if (u.CTLR1 & USART_IT_IDLE) return 3;
+    p.port.vTable=&plain;serialSetIdleCallback(&p.port,NULL);
+    if (p.port.idleCallback) return 4;
+    puts("callbacks registered after open enable IDLE without reconfiguring the UART");
+}
 ''')
-
+run('uart_line_end_release',pre+uart_rx+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void uartTxMonitorIfComplete')+uart_irq+'''
+int main(void){USART_TypeDef usart={.CTLR1=USART_CTLR1_TCIE};uartDevice_t d={.port={.USARTx=&usart,.txDMAResource=NULL,.rxDMAResource=NULL,.port={.txBufferHead=2,.txBufferTail=1,.txBufferSize=8}}};
+ usart.STATR=USART_STATR_TC;uartIrqHandler(&d.port);if(monitorCalls)return 1;
+ d.port.port.txBufferTail=d.port.port.txBufferHead;usart.STATR=USART_STATR_TC;uartIrqHandler(&d.port);return monitorCalls!=1;}
+''')
+run('uart_full_duplex_rx',pre+uart_rx+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void uartTxMonitorIfComplete')+uart_irq+'''
+int main(void) {
+ USART_TypeDef u={.STATR=USART_STATR_TC|USART_STATR_IDLE,.CTLR1=USART_CTLR1_TCIE};
+ uartPort_t s={.USARTx=&u,.port={.rxCallback=onRx,.idleCallback=onIdle,.txBufferSize=8,.rxBufferSize=8}};
+ injectLate=1; uartIrqHandler(&s);
+ if (reads || received || idleCalls || !(u.STATR & USART_STATR_RXNE)) return 1;
+ injectLate=0; uartIrqHandler(&s);
+ if (received!=1 || receivedData!=0x5a || idleCalls) return 2;
+ received=reads=0; u.STATR=USART_STATR_TC|USART_STATR_IDLE;u.CTLR1=USART_CTLR1_TCIE|USART_CTLR1_IDLEIE;
+ injectLate=1; uartIrqHandler(&s);
+ if (received!=1 || receivedData!=0x5a || idleCalls!=1 || reads!=1) return 3;
+ received=reads=0;injectLate=0;u.STATR=USART_STATR_RXNE|USART_STATR_ORE|USART_STATR_TC|USART_STATR_TXE;u.CTLR1=USART_CTLR1_RXNEIE;u.DATAR=0x37;
+ uartIrqHandler(&s);
+ if (received!=1 || receivedData!=0x37 || reads!=1 || !(u.STATR & USART_STATR_TC) || !(u.STATR & USART_STATR_TXE)) return 4;
+ puts("disabled flags do not trigger TX or IDLE; late RX and RXNE+ORE are delivered");
+}
+''')
 pre += '''
 #define NVIC_PRIO_SERIALUART_TXDMA 0x50
 #define ATOMIC_BLOCK(x) for(int once=1;once;once=0)
@@ -1056,13 +1113,14 @@ pre += '''
 #define DMA_CLEAR_FLAG(d,f) ((d)->flags &= ~(f))
 typedef struct {uintptr_t userParam;uint32_t flags;} dmaChannelDescriptor_t;
 static unsigned xDMA_GetCurrDataCounter(dma_t *d){return d->CNTR;}
+static void USART_ClearFlag(USART_TypeDef *u, int flag){u->STATR &= ~flag;}
 static void xDMA_SetCurrDataCounter(dma_t *d,unsigned n){d->CNTR=n;}
 static void xDMA_Cmd(dma_t *d,int enabled){d->CFGR=enabled;}
 static void ch32DmaBarrier(void){}
 '''
-run('uart_usart_before_dma',pre+fn('src/platform/CH32/serial_uart_ch32bsp.c','void uartTryStartTxDMA(')+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void uartTxMonitorIfComplete')+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void handleUsartTxDma(')+fn('src/platform/CH32/serial_uart_ch32bsp.c','void uartDmaIrqHandler(')+fn('src/platform/CH32/serial_uart_ch32bsp.c','FAST_IRQ_HANDLER void uartIrqHandler')+'''
-int main(void){USART_TypeDef usart={0};dma_t reg={.CFGR=1,.CNTR=0};uartDevice_t d={.port={.USARTx=&usart,.txDMAResource=&reg,.rxDMAResource=NULL,.port={.txBufferHead=2,.txBufferTail=2,.txBufferSize=8}}};
- usartFlags=USART_FLAG_TC;uartIrqHandler(&d.port);if(monitorCalls||!d.port.txCompletePending)return 1;
+run('uart_usart_before_dma',pre+fn('src/platform/CH32/serial_uart_ch32bsp.c','void uartTryStartTxDMA(')+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void uartTxMonitorIfComplete')+fn('src/platform/CH32/serial_uart_ch32bsp.c','static void handleUsartTxDma(')+fn('src/platform/CH32/serial_uart_ch32bsp.c','void uartDmaIrqHandler(')+uart_rx+uart_irq+'''
+int main(void){USART_TypeDef usart={.CTLR1=USART_CTLR1_TCIE};dma_t reg={.CFGR=1,.CNTR=0};uartDevice_t d={.port={.USARTx=&usart,.txDMAResource=&reg,.rxDMAResource=NULL,.port={.txBufferHead=2,.txBufferTail=2,.txBufferSize=8}}};
+ usart.STATR=USART_STATR_TC;uartIrqHandler(&d.port);if(monitorCalls||!d.port.txCompletePending)return 1;
  dmaChannelDescriptor_t desc={.userParam=(uintptr_t)&d,.flags=DMA_IT_TCIF};uartDmaIrqHandler(&desc);
  return reg.CFGR!=0||monitorCalls!=1||d.port.txCompletePending;}
 ''')
