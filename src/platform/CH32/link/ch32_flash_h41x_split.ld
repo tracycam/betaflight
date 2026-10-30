@@ -70,6 +70,7 @@ SECTIONS
 		obj/main/CH32H415*/drivers/opticalflow/*.o(.text .text.*)
 		obj/main/CH32H415*/drivers/rangefinder/*.o(.text .text.*)
 		obj/main/CH32H415*/drivers/rx/*.o(.text .text.*)
+		obj/main/CH32H415*/rx/crsf.o(.text .text.*)
 		obj/main/CH32H415*/scheduler/*.o(.text .text.*)
 		obj/main/CH32H415*/sensors/*.o(.text .text.*)
 		obj/main/CH32H415*/telemetry/*.o(.text .text.*)
@@ -79,6 +80,8 @@ SECTIONS
         obj/main/CH32H415*/ch32h417_tim.o(.text .text.*)
 		obj/main/CH32H415*/ch32h417_spi.o(.text .text.*)
 		obj/main/CH32H415*/ch32h417_gpio.o(.text .text.*)
+		obj/main/CH32H415*/ch32h417_usart.o(.text .text.*)
+        *libgcc.a:*save-restore*.o(.text .text.*)
 		. = ALIGN(4);
         tcm_code_end = .;
     } >ITCM AT >MOVABLE_FLASH
