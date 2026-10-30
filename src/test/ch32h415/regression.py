@@ -363,7 +363,7 @@ typedef struct { uint32_t CFGR; } dmaResource_t;
 typedef struct { uint32_t BSHR, CFGLR, CFGHR; } gpio_t;
 typedef struct { uint32_t ATRLR; } TIM_TypeDef;
 typedef struct { TIM_TypeDef *tim; } mockTimer_t;
-typedef struct { dmaResource_t *dmaResource; gpio_t *gpio; mockTimer_t *timhw; uint32_t gpioIdleBSRR, gpioModeMask, gpioModeOutput, outputARR; int outputDmaInit, direction; } bbPort_t;
+typedef struct { dmaResource_t *dmaResource; gpio_t *gpio; mockTimer_t *timhw; uint32_t gpioIdleBSRR, gpioModeMask, gpioModeOutput, outputARR, gpioCfgLrMask, gpioCfgHrMask, gpioCfgLrOutput, gpioCfgHrOutput; int outputDmaInit, direction; } bbPort_t;
 static bool stuck;
 static int dmaWrites;
 static void bbDMA_Cmd(bbPort_t *p, int state) { if (!stuck) p->dmaResource->CFGR=state; }
@@ -458,6 +458,87 @@ static void IOLo(IO_t a){}
 static void IOHi(IO_t a){}
 '''
 run('motor_unconfigured',pre+fn(bb,'bool dshotBitbangDevInit(')+'''int main(void){motorDevice_t d={.count=4}; motorDevConfig_t c={0}; return dshotBitbangDevInit(&d,&c);}''')
+
+run('dshot_bb_gpio_precompute', '''
+#define USE_DSHOT_TELEMETRY
+#define DIR_IN 0u
+#define DIR_OUT 1u
+#define GPIO_PULL_NONE 0u
+#define GPIO_PULL_DOWN 1u
+#define GPIO_PULL_UP 2u
+#define IO_CONFIG_GET_PULL(cfg) (((cfg) >> 6) & 3u)
+#define DSHOT_BITBANG_DIRECTION_OUTPUT 1
+#define DSHOT_BITBANG_DIRECTION_INPUT 2
+#define NVIC_PRIO_TIMER 0
+#define ATOMIC_BLOCK(x) for (int once=1; once; once=0)
+#define WRITE_REG(r,v) ((r)=(v))
+#define MODIFY_REG(r,m,v) ((r)=((r)&~(m))|(v))
+#define dbgPinHi(x) ((void)0)
+#define dbgPinLo(x) ((void)0)
+#define DISABLE 0
+#define ENABLE 1
+#define DMA_IT_TC 1
+#define DMA_IT_TE 2
+typedef struct { uint32_t CFGLR, CFGHR, BSHR; } GPIO_TypeDef;
+typedef struct { uint32_t ATRLR, CNT; } TIM_TypeDef;
+typedef struct { int unused; } dmaResource_t;
+typedef struct { void *tim; } timerHardware_t;
+typedef struct { GPIO_TypeDef *gpio; dmaResource_t *dmaResource; timerHardware_t *timhw;
+    uint32_t gpioModeMask,gpioModeInput,gpioModeOutput,gpioIdleBSRR;
+    uint32_t gpioCfgLrMask,gpioCfgHrMask,gpioCfgLrOutput,gpioCfgHrOutput,gpioCfgLrInput,gpioCfgHrInput,gpioInputBSRR;
+    uint32_t outputDmaInit,inputDmaInit,outputARR,inputARR,direction;
+} bbPort_t;
+typedef struct { bbPort_t *bbPort; int pinIndex; unsigned iocfg; void *io; } bbMotor_t;
+static bool useDshotTelemetry=true;
+static void IOWrite(void *io,int value) { (void)io;(void)value; }
+static void bbDMA_Cmd(bbPort_t *p,int state) { (void)p;(void)state; }
+static bool bbDMAWaitStopped(dmaResource_t *p) { (void)p;return true; }
+static void xDMA_Init(dmaResource_t *p,void *init) { (void)p;(void)init; }
+static void xDMA_ITConfig(dmaResource_t *p,int flags,int state) { (void)p;(void)flags;(void)state; }
+''' + fn('src/platform/CH32/dshot_bitbang_stdperiph.c','void bbGpioSetup(')
+    + fn('src/platform/CH32/dshot_bitbang_stdperiph.c','bool bbSwitchToOutput(')
+    + fn('src/platform/CH32/dshot_bitbang_stdperiph.c','void bbSwitchToInput(') + '''
+int main(void) {
+    GPIO_TypeDef gpio={.CFGLR=0x55555555,.CFGHR=0x55555555};
+    TIM_TypeDef timer={0};timerHardware_t hw={&timer};dmaResource_t dma={0};
+    bbPort_t p={.gpio=&gpio,.timhw=&hw,.dmaResource=&dma};
+    const int pins[]={3,4,5,6,8,15};
+    const unsigned pulls[]={GPIO_PULL_UP,GPIO_PULL_DOWN,GPIO_PULL_UP,GPIO_PULL_DOWN,GPIO_PULL_NONE,GPIO_PULL_DOWN};
+    for (unsigned i=0;i<sizeof(pins)/sizeof(pins[0]);i++) {
+        bbMotor_t m={.bbPort=&p,.pinIndex=pins[i],.iocfg=pulls[i]<<6};bbGpioSetup(&m);
+    }
+    if (p.gpioCfgLrMask!=0x0ffff000u || p.gpioCfgHrMask!=0xf000000fu) return 1;
+    if (p.gpioCfgLrOutput!=0x03333000u || p.gpioCfgHrOutput!=0x30000003u) return 2;
+    if (p.gpioCfgLrInput!=0x08888000u || p.gpioCfgHrInput!=0x80000004u) return 3;
+    if (p.gpioInputBSRR!=((1u<<3)|(1u<<5)|(1u<<20)|(1u<<22)|(1u<<31))) return 4;
+    if (!bbSwitchToOutput(&p) || gpio.CFGLR!=0x53333555u || gpio.CFGHR!=0x35555553u || gpio.BSHR!=p.gpioIdleBSRR) return 5;
+    bbSwitchToInput(&p);
+    if (gpio.CFGLR!=0x58888555u || gpio.CFGHR!=0x85555554u || gpio.BSHR!=p.gpioInputBSRR) return 6;
+    puts("mixed low/high pins, pull directions, and untouched GPIO bits are preserved");
+}
+''')
+run('dshot_bb_port_reuse', '''
+#define MAX_SUPPORTED_MOTOR_PORTS 1
+#define DSHOT_BITBANG_STATUS_TOO_MANY_PORTS 1
+#define DSHOT_BITBANG_STATUS_NO_PACER 2
+#define OWNER_DSHOT_BITBANG 3
+#define RESOURCE_INDEX(i) ((i)+1)
+typedef struct { const void *timhw; int portIndex; struct { int owner,index; } resourceOwner;
+    uint32_t gpioModeMask,gpioModeInput,gpioModeOutput,gpioIdleBSRR,gpioInputBSRR;
+    uint32_t gpioCfgLrMask,gpioCfgHrMask,gpioCfgLrOutput,gpioCfgHrOutput,gpioCfgLrInput,gpioCfgHrInput;
+} bbPort_t;
+static bbPort_t bbPorts[1];static int usedMotorPorts,bbStatus;
+''' + fn('src/platform/CH32/dshot_bitbang.c','static bbPort_t *bbAllocateMotorPort(') + '''
+int main(void) {
+    int timer;bbPort_t *p=&bbPorts[0];p->timhw=&timer;
+    p->gpioModeMask=p->gpioModeInput=p->gpioModeOutput=p->gpioIdleBSRR=p->gpioInputBSRR=~0u;
+    p->gpioCfgLrMask=p->gpioCfgHrMask=p->gpioCfgLrOutput=p->gpioCfgHrOutput=p->gpioCfgLrInput=p->gpioCfgHrInput=~0u;
+    if (bbAllocateMotorPort(2)!=p || p->timhw!=&timer || p->portIndex!=2) return 1;
+    if (p->gpioModeMask|p->gpioModeInput|p->gpioModeOutput|p->gpioIdleBSRR|p->gpioInputBSRR|
+        p->gpioCfgLrMask|p->gpioCfgHrMask|p->gpioCfgLrOutput|p->gpioCfgHrOutput|p->gpioCfgLrInput|p->gpioCfgHrInput) return 2;
+    puts("reused port clears cached masks without losing its allocated timer");
+}
+''')
 
 uart='src/platform/common/stm32/serial_uart_hw.c'
 pre='''

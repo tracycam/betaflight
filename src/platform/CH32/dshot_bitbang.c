@@ -209,6 +209,11 @@ static bbPort_t *bbAllocateMotorPort(int portIndex)
     }
 
     bbPort->portIndex = portIndex;
+    bbPort->gpioModeMask = bbPort->gpioModeInput = bbPort->gpioModeOutput = 0;
+    bbPort->gpioIdleBSRR = bbPort->gpioInputBSRR = 0;
+    bbPort->gpioCfgLrMask = bbPort->gpioCfgHrMask = 0;
+    bbPort->gpioCfgLrOutput = bbPort->gpioCfgHrOutput = 0;
+    bbPort->gpioCfgLrInput = bbPort->gpioCfgHrInput = 0;
     bbPort->resourceOwner.owner = OWNER_DSHOT_BITBANG;
     bbPort->resourceOwner.index = RESOURCE_INDEX(portIndex);
 

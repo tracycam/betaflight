@@ -185,6 +185,13 @@ typedef struct bbPort_s {
     // Idle value
     uint32_t gpioIdleBSRR;
 
+#ifdef CH32H4
+    uint32_t gpioCfgLrMask, gpioCfgHrMask;
+    uint32_t gpioCfgLrOutput, gpioCfgHrOutput;
+    uint32_t gpioCfgLrInput, gpioCfgHrInput;
+    uint32_t gpioInputBSRR;
+#endif
+
 #ifdef USE_HAL_DRIVER
     LL_TIM_InitTypeDef timeBaseInit;
 #elif defined(AT32F435)
