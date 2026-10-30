@@ -47,6 +47,24 @@ int main(void) {
     puts("combined flags target the selected channel");
 }
 ''', extra_flags=('-Wall','-Wextra','-I'+str(host_include),'-I'+str(root/'src/main'),'-I'+str(root/'src/platform/CH32/include')))
+run('rcc_high_bit', '''
+typedef uint32_t rccPeriphTag_t;
+typedef enum { DISABLE, ENABLE } FunctionalState;
+static struct { uint32_t HBPRSTR, HB1PRSTR, HB2PRSTR; } registers;
+#define RCC (&registers)
+#define RCC_HB 1
+#define RCC_HB1 2
+#define RCC_HB2 3
+#define NOSUFFIX
+''' + fn('src/platform/CH32/rcc_ch32.c','void RCC_ResetCmd(') + '''
+int main(void) {
+    RCC_ResetCmd((RCC_HB1 << 5) | 31, DISABLE);
+    if (registers.HB1PRSTR != 0x80000000u) return 1;
+    RCC_ResetCmd((RCC_HB1 << 5) | 31, ENABLE);
+    if (registers.HB1PRSTR != 0) return 2;
+    puts("bit 31 and reset enable semantics");
+}
+''')
 run('pfic', '#define PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL\n#include "platform/priority.h"\nstatic volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'
     +fn(pf,'__attribute__((always_inline)) static inline uint32_t __get_BASEPRI')
     +fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_nb')

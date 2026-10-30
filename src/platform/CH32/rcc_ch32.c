@@ -28,7 +28,7 @@
 void RCC_ClockCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
 {
     int tag = periphTag >> 5;
-    uint32_t mask = 1 << (periphTag & 0x1f);
+    uint32_t mask = 1U << (periphTag & 0x1f);
 
 #define NOSUFFIX // Empty
 
@@ -70,7 +70,7 @@ void RCC_ClockCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
 void RCC_ResetCmd(rccPeriphTag_t periphTag, FunctionalState NewState)
 {
     int tag = periphTag >> 5;
-    uint32_t mask = 1 << (periphTag & 0x1f);
+    uint32_t mask = 1U << (periphTag & 0x1f);
 
 #define __RCC_FORCE_RESET(bus, suffix, enbit) (RCC->bus ## PRSTR ## suffix |= (enbit))
 #define __RCC_RELEASE_RESET(bus, suffix, enbit) (RCC->bus ## PRSTR ## suffix &= ~(enbit))
