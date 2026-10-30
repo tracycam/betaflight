@@ -26,6 +26,29 @@ def run(name,src,timeout=2,extra_flags=()):
   raise RuntimeError(f'{name}: failed with exit code {e.returncode}\n{e.stdout}{e.stderr}')
 
 pf='src/platform/CH32/include/platform/platform.h'
+run('exti_unregistered', '''
+typedef struct extiCallbackRec_s extiCallbackRec_t;
+struct extiCallbackRec_s { void (*fn)(extiCallbackRec_t *); };
+static struct { extiCallbackRec_t *handler; } extiChannelRecs[16];
+static uint32_t imr, pr;
+#define EXTI_REG_IMR imr
+#define EXTI_REG_PR pr
+static int calls;
+static void callback(extiCallbackRec_t *self) { (void)self; calls++; }
+''' + fn('src/platform/CH32/exti_ch32.c','static void EXTI_IRQHandler(') + '''
+int main(void) {
+    extiCallbackRec_t valid={callback}, empty={NULL};
+    extiChannelRecs[3].handler=&valid;
+    extiChannelRecs[2].handler=&empty;
+    imr=pr=0x0f;
+    EXTI_IRQHandler(0x07);
+    if (calls != 0 || pr != 7) return 1;
+    pr=0x0f;
+    EXTI_IRQHandler(0x0f);
+    if (calls != 1 || pr != 15) return 2;
+    puts("missing callbacks are skipped; registered callbacks still run");
+}
+''')
 host_include=out/'include'
 host_include.mkdir(exist_ok=True)
 (host_include/'platform.h').write_text('/* The host tests supply simulated peripherals. */\n')
