@@ -140,7 +140,6 @@ __attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state
 // #define USE_OVERCLOCK
 #define USE_ADC_INTERNAL
 #define ADC_VOLTAGE_REFERENCE_MV  3300  //maybe better  cali internal
-#define USE_USB_MSC
 #define USE_PERSISTENT_MSC_RTC
 // #define USE_MCO
 #define USE_DMA_SPEC
