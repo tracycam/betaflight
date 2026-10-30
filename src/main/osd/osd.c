@@ -417,7 +417,11 @@ void pgResetFn_osdConfig(osdConfig_t *osdConfig)
     osdConfig->aux_symbol = 'A';
 
     // Make it obvious on the configurator that the FC doesn't support HD
-#ifdef USE_OSD_HD
+#if defined(USE_THEIA_OSD)
+    osdConfig->displayPortDevice = OSD_DISPLAYPORT_DEVICE_THEIA;
+    osdConfig->canvas_cols = OSD_SD_COLS;
+    osdConfig->canvas_rows = OSD_SD_ROWS;
+#elif defined(USE_OSD_HD)
     osdConfig->displayPortDevice = OSD_DISPLAYPORT_DEVICE_MSP;
     osdConfig->canvas_cols = OSD_HD_COLS;
     osdConfig->canvas_rows = OSD_HD_ROWS;

@@ -4305,6 +4305,10 @@ static void cliReboot(void)
 
 RAM_CODE static void cliBootloader(const char *cmdName, char *cmdline)
 {
+#if !PLATFORM_SUPPORTS_SOFTWARE_BOOTLOADER
+    UNUSED(cmdline);
+    cliPrintErrorLinef(cmdName, "Software bootloader entry unavailable; use hardware boot mode");
+#else
     rebootTarget_e rebootTarget;
     if (
 #if !defined(USE_FLASH_BOOT_LOADER)
@@ -4327,6 +4331,7 @@ RAM_CODE static void cliBootloader(const char *cmdName, char *cmdline)
     }
 
     cliRebootEx(rebootTarget);
+#endif
 }
 
 RAM_CODE static void cliExitCmd(const char *cmdName, char *cmdline)

@@ -56,6 +56,15 @@ static uint32_t cpuClockFrequency = 0;
 
 void cycleCounterInit(void)
 {
+#if defined(CH32H4)
+    cpuClockFrequency = HCLKClock;
+    usTicks = HCLKClock / 1000000;
+    usTicksInv = 1e6f / cpuClockFrequency;
+
+    asm volatile ("csrw mucounteren, %0" : : "r" (0x5));
+    asm volatile ("csrw mcycle, %0" : : "r" (0));
+    asm volatile ("csrw mucounteren, %0" : : "r" (0));
+#else
 #if defined(USE_HAL_DRIVER)
 #if defined(CORE_CM4)
     // M4 core on dual-core H755/H757 runs at HCLK (after HPRE division)
@@ -92,12 +101,25 @@ void cycleCounterInit(void)
 
     DWT->CYCCNT = 0;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+#endif
 }
 
 // SysTick
 
 static volatile int sysTickPending = 0;
 
+#if defined(CH32H4)
+__FAST_INTERRUPT
+void SysTick1_Handler(void)
+{
+    ATOMIC_BLOCK(NVIC_PRIO_MAX) {
+        sysTickUptime++;
+        sysTickValStamp = SysTick1->CNT;
+        sysTickPending = 0;
+        SysTick0->ISR &= ~(1 << 1);
+    }
+}
+#else
 void SysTick_Handler(void)
 {
     ATOMIC_BLOCK(NVIC_PRIO_MAX) {
@@ -111,11 +133,27 @@ void SysTick_Handler(void)
     HAL_IncTick();
 #endif
 }
+#endif
 
 // Return system uptime in microseconds (rollover in 70minutes)
 
 MMFLASH_CODE_NOINLINE uint32_t microsISR(void)
 {
+#if defined(CH32H4)
+    volatile uint32_t ms, pending, cycle_cnt;
+
+    ATOMIC_BLOCK(NVIC_PRIO_MAX) {
+        cycle_cnt = SysTick1->CNT;
+        if (SysTick0->ISR & (1 << 1)) {
+            sysTickPending = 1;
+            cycle_cnt = SysTick1->CNT;
+        }
+        ms = sysTickUptime;
+        pending = sysTickPending;
+    }
+
+    return ((ms + pending) * 1000) + (usTicks * 1000 - cycle_cnt) / usTicks;
+#else
     register uint32_t ms, pending, cycle_cnt;
 
     ATOMIC_BLOCK(NVIC_PRIO_MAX) {
@@ -139,12 +177,23 @@ MMFLASH_CODE_NOINLINE uint32_t microsISR(void)
     }
 
     return ((ms + pending) * 1000) + (usTicks * 1000 - cycle_cnt) / usTicks;
+#endif
 }
 
 uint32_t micros(void)
 {
     register uint32_t ms, cycle_cnt;
 
+#if defined(CH32H4)
+    if ((PFIC->GISR & 0xFF) || (__get_BASEPRI())) {
+        return microsISR();
+    }
+
+    do {
+        ms = sysTickUptime;
+        cycle_cnt = SysTick1->CNT;
+    } while (ms != sysTickUptime || cycle_cnt > sysTickValStamp);
+#else
     // Call microsISR() in interrupt and elevated (non-zero) BASEPRI context
 
     if ((SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) || (__get_BASEPRI())) {
@@ -155,40 +204,71 @@ uint32_t micros(void)
         ms = sysTickUptime;
         cycle_cnt = SysTick->VAL;
     } while (ms != sysTickUptime || cycle_cnt > sysTickValStamp);
+#endif
 
     return (ms * 1000) + (usTicks * 1000 - cycle_cnt) / usTicks;
 }
 
 uint32_t getCycleCounter(void)
 {
+#if defined(CH32H4)
+    uint32_t result;
+    asm volatile ("csrr %0, mcycle" : "=r" (result));
+    return result;
+#else
     return DWT->CYCCNT;
+#endif
 }
+
+#if defined(CH32H4)
+#define CYCLE_TICKS_PER_US (SystemCoreClock / 1000000)
+#endif
 
 int32_t clockCyclesToMicros(int32_t clockCycles)
 {
+#if defined(CH32H4)
+    return clockCycles / CYCLE_TICKS_PER_US;
+#else
     return clockCycles / usTicks;
+#endif
 }
 
 float clockCyclesToMicrosf(int32_t clockCycles)
 {
+#if defined(CH32H4)
+    return clockCycles * (1e6f / SystemCoreClock);
+#else
     return clockCycles * usTicksInv;
+#endif
 }
 
 // Note that this conversion is signed as this is used for periods rather than absolute timestamps
 int32_t clockCyclesTo10thMicros(int32_t clockCycles)
 {
+#if defined(CH32H4)
+    return (int32_t)((int64_t)clockCycles * 10 / CYCLE_TICKS_PER_US);
+#else
     return 10 * clockCycles / (int32_t)usTicks;
+#endif
 }
 
 // Note that this conversion is signed as this is used for periods rather than absolute timestamps
 int32_t clockCyclesTo100thMicros(int32_t clockCycles)
 {
+#if defined(CH32H4)
+    return (int32_t)((int64_t)clockCycles * 100 / CYCLE_TICKS_PER_US);
+#else
     return 100 * clockCycles / (int32_t)usTicks;
+#endif
 }
 
 uint32_t clockMicrosToCycles(uint32_t micros)
 {
+#if defined(CH32H4)
+    return micros * CYCLE_TICKS_PER_US;
+#else
     return micros * usTicks;
+#endif
 }
 
 // Return system uptime in milliseconds (rollover in 49 days)
@@ -274,7 +354,7 @@ void failureMode(failureMode_e mode)
 {
     indicateFailure(mode, 10);
 
-#ifdef DEBUG
+#if defined(DEBUG) || !PLATFORM_SUPPORTS_SOFTWARE_BOOTLOADER
     systemReset();
 #else
     systemResetToBootloader(BOOTLOADER_REQUEST_ROM);

@@ -22,7 +22,7 @@
 
 #include <stdint.h>
 
-#if !defined(UNIT_TEST)
+#if !defined(UNIT_TEST) && !defined(PLATFORM_CUSTOM_BASEPRI_NB)
 // BASEPRI manipulation functions
 // only set_BASEPRI is implemented in device library. It does always create memory barrier
 // missing versions are implemented here
@@ -131,6 +131,7 @@ static inline uint8_t __basepriSetRetVal(uint8_t prio)
     return 1;
 }
 
+#ifndef PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL
 static inline uint32_t __primaskGet(void)
 {
     return __get_PRIMASK();
@@ -146,6 +147,7 @@ static inline uint32_t __primaskSetMemRetVal(void)
     __disable_irq();
     return 1;
 }
+#endif
 
 #endif
 
@@ -165,9 +167,11 @@ static inline uint32_t __primaskSetMemRetVal(void)
 #define ATOMIC_BLOCK_NB(prio) for ( uint8_t __basepri_save __attribute__ ((__cleanup__ (__basepriRestore), __unused__)) = __get_BASEPRI(), \
                                     __ToDo = __basepriSetRetVal(prio); __ToDo ; __ToDo = 0 ) \
 
+#ifndef PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL
 // Run block with all maskable interrupts disabled, restoring PRIMASK on every exit path.
 #define ATOMIC_BLOCK_ALL() for ( uint32_t __primask_save __attribute__ ((__cleanup__ (__primaskRestoreMem), __unused__)) = __primaskGet(), \
                                          __ToDo = __primaskSetMemRetVal(); __ToDo ; __ToDo = 0 )
+#endif
 
 // ATOMIC_BARRIER
 // Create memory barrier

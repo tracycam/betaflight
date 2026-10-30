@@ -93,6 +93,9 @@ void mspSerialReleasePortIfAllocated(serialPort_t *serialPort)
 {
     for (mspPort_t *candidateMspPort = mspPorts; candidateMspPort < ARRAYEND(mspPorts); candidateMspPort++) {
         if (candidateMspPort->port == serialPort) {
+            if (candidateMspPort->deferredCommand) {
+                mspFcCancelDeferredCommand(candidateMspPort->descriptor, candidateMspPort->cmdMSP);
+            }
             closeSerialPort(serialPort);
             memset(candidateMspPort, 0, sizeof(mspPort_t));
         }
@@ -114,6 +117,9 @@ void mspSerialReleaseSharedTelemetryPorts(void)
 {
     for (mspPort_t *candidateMspPort = mspPorts; candidateMspPort < ARRAYEND(mspPorts); candidateMspPort++) {
         if (candidateMspPort->sharedWithTelemetry) {
+            if (candidateMspPort->deferredCommand) {
+                mspFcCancelDeferredCommand(candidateMspPort->descriptor, candidateMspPort->cmdMSP);
+            }
             closeSerialPort(candidateMspPort->port);
             memset(candidateMspPort, 0, sizeof(mspPort_t));
         }
@@ -433,8 +439,9 @@ static mspPostProcessFnPtr mspSerialProcessReceivedCommand(mspPort_t *msp, mspPr
 
     mspPostProcessFnPtr mspPostProcessFn = NULL;
     const mspResult_e status = mspProcessCommandFn(msp->descriptor, &command, &reply, &mspPostProcessFn);
+    msp->deferredCommand = status == MSP_RESULT_DEFERRED;
 
-    if (status != MSP_RESULT_NO_REPLY) {
+    if (status != MSP_RESULT_NO_REPLY && status != MSP_RESULT_DEFERRED) {
         sbufSwitchToReader(&reply.buf, outBufHead); // change streambuf direction
         mspSerialEncode(msp, &reply, msp->mspVersion);
     }
@@ -451,12 +458,20 @@ static void mspProcessPendingRequest(mspPort_t * mspPort)
 
     switch(mspPort->pendingRequest) {
     case MSP_PENDING_BOOTLOADER_ROM:
+#if PLATFORM_SUPPORTS_SOFTWARE_BOOTLOADER
         systemResetToBootloader(BOOTLOADER_REQUEST_ROM);
+#else
+        mspPort->pendingRequest = MSP_PENDING_NONE;
+#endif
         break;
 
 #if defined(USE_FLASH_BOOT_LOADER)
     case MSP_PENDING_BOOTLOADER_FLASH:
+#if PLATFORM_SUPPORTS_SOFTWARE_BOOTLOADER
         systemResetToBootloader(BOOTLOADER_REQUEST_FLASH);
+#else
+        mspPort->pendingRequest = MSP_PENDING_NONE;
+#endif
         break;
 #endif
 
@@ -532,6 +547,21 @@ void mspSerialProcess(mspEvaluateNonMspData_e evaluateNonMspData, mspProcessComm
             continue;
         }
 
+        if (mspPort->deferredCommand) {
+            // A deferred command can complete only once. Make room for its
+            // empty acknowledgement before polling it, so a full TX queue
+            // cannot discard the result after the operation has completed.
+            if (!isSerialTransmitBufferEmpty(mspPort->port) && serialTxBytesFree(mspPort->port) < 16) {
+                continue;
+            }
+            mspPostProcessFnPtr post = mspSerialProcessReceivedCommand(mspPort, mspProcessCommandFn);
+            if (post) {
+                waitForSerialPortToFinishTransmitting(mspPort->port);
+                post(mspPort->port);
+            }
+            continue;
+        }
+
         // whilst port is idle, poll incoming until portState changes or no more bytes
         while (mspPort->portState == PORT_IDLE && serialRxBytesWaiting(mspPort->port)) {
             mspPort->lastActivityMs = millis();
@@ -550,7 +580,7 @@ void mspSerialProcess(mspEvaluateNonMspData_e evaluateNonMspData, mspProcessComm
 #endif
                        ) {
                 // evaluate the non-MSP data
-                if (c == serialConfig()->reboot_character) {
+                if (PLATFORM_SUPPORTS_SOFTWARE_BOOTLOADER && c == serialConfig()->reboot_character) {
                     mspPort->pendingRequest = MSP_PENDING_BOOTLOADER_ROM;
 #ifdef USE_CLI
                 } else if (c == '#') {

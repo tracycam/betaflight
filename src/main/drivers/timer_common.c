@@ -53,6 +53,16 @@ const timerHardware_t *timerGetByTagAndIndex(ioTag_t ioTag, unsigned timerIndex)
     uint8_t index = 1;
     for (unsigned i = 0; i < TIMER_CHANNEL_COUNT; i++) {
         if (TIMER_HARDWARE[i].tag == ioTag) {
+#if defined(CH32H4) && defined(USE_THEIA_OSD)
+            const timerResource_t *tim = TIMER_HARDWARE[i].tim;
+            const bool reservedTimer = tim == (const timerResource_t *)TIM2
+                || tim == (const timerResource_t *)TIM10
+                || tim == (const timerResource_t *)TIM11
+                || tim == (const timerResource_t *)TIM12;
+            if (reservedTimer || !IOGetByTag(ioTag)) {
+                continue;
+            }
+#endif
             if (index == timerIndex) {
                 return &TIMER_HARDWARE[i];
             }

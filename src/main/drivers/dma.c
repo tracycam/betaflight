@@ -22,9 +22,17 @@
 #ifdef USE_DMA
 
 #include "drivers/dma_impl.h"
+#if defined(CH32H4)
+#include "platform/dma.h"
+#endif
 
 bool dmaAllocate(dmaIdentifier_e identifier, resourceOwner_e owner, uint8_t resourceIndex)
 {
+#if defined(CH32H4) && defined(USE_THEIA_OSD)
+    if (identifier == DMA2_CH6_HANDLER) {
+        return false;
+    }
+#endif
     const int index = DMA_IDENTIFIER_TO_INDEX(identifier);
     const int handlerCount = dmaGetHandlerCount();
     // Prevent Wstringop-overflow warning

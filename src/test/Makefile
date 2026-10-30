@@ -184,6 +184,14 @@ common_filter_unittest_SRC := \
 		$(USER_DIR)/common/filter.c \
 		$(USER_DIR)/common/maths.c
 
+dyn_notch_filter_unittest_SRC := \
+        $(USER_DIR)/flight/dyn_notch_filter.c \
+        $(USER_DIR)/common/filter.c \
+        $(USER_DIR)/common/maths.c \
+        $(USER_DIR)/common/sdft.c
+
+dyn_notch_filter_unittest_DEFINES := \
+        USE_DYN_NOTCH_FILTER=
 
 encoding_unittest_SRC := \
 		$(USER_DIR)/common/encoding.c
@@ -287,6 +295,11 @@ msp_serial_unittest_SRC := \
 msp_serial_unittest_DEFINES := \
 		USE_CLI= \
 		USE_MSP_DISPLAYPORT=
+
+msp_serial_no_bootloader_unittest_SRC := $(msp_serial_unittest_SRC)
+msp_serial_no_bootloader_unittest_DEFINES := \
+		$(msp_serial_unittest_DEFINES) \
+		PLATFORM_SUPPORTS_SOFTWARE_BOOTLOADER=0
 
 osd_unittest_SRC := \
 		$(USER_DIR)/osd/osd.c \

@@ -378,6 +378,8 @@ void configUnlock(void)
     DAL_FLASH_Unlock();
 #elif defined(AT32F4)
     flash_unlock();
+#elif defined(CH32H4)
+    FLASH_Unlock_Fast();
 #else
     FLASH_Unlock();
 #endif
@@ -420,6 +422,8 @@ void configLock(void)
         flash_lock();
 #elif defined(APM32F4)
         DAL_FLASH_Lock();
+#elif defined(CH32H4)
+        FLASH_Lock_Fast();
 #else
         FLASH_Lock();
 #endif
@@ -445,6 +449,8 @@ void configClearFlags(void)
     __DAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR | FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR | FLASH_FLAG_PGSERR);
 #elif defined(X32M7)
     // SMU flash operations return status directly.
+#elif defined(CH32H4)
+    FLASH_ClearFlag(FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR);
 #elif defined(UNIT_TEST) || defined(SIMULATOR_BUILD)
     // NOP
 #else
@@ -617,6 +623,19 @@ configStreamerResult_e configWriteWord(uintptr_t address, config_streamer_buffer
     STATIC_ASSERT(CONFIG_STREAMER_BUFFER_SIZE == 16,  "CONFIG_STREAMER_BUFFER_SIZE does not match written size");
     const HAL_StatusTypeDef status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_QUADWORD, address, (uint32_t)buffer);
     if (status != HAL_OK) {
+        return CONFIG_RESULT_ADDRESS_INVALID;
+    }
+#elif defined(CH32H4)
+    if (address % FLASH_PAGE_SIZE == 0) {
+        const FLASH_Status status = FLASH_ErasePage(address);
+        if (status != FLASH_COMPLETE) {
+            return CONFIG_RESULT_FAILURE;
+        }
+    }
+    STATIC_ASSERT(CONFIG_STREAMER_BUFFER_SIZE == sizeof(uint32_t) * 64, "CONFIG_STREAMER_BUFFER_SIZE does not match written size");
+    FLASH_ProgramPage_Fast(address, buffer);
+    const FLASH_Status status = FLASH_GetStatus();
+    if (status != FLASH_COMPLETE) {
         return CONFIG_RESULT_ADDRESS_INVALID;
     }
 #else
