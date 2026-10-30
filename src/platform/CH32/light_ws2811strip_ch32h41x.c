@@ -127,7 +127,7 @@ bool ws2811LedStripHardwareInit(void)
 
     /* Time base configuration */
     TIM_TimeBaseStructInit(&TIM_TimeBaseStructure);
-    TIM_TimeBaseStructure.TIM_Period = period; // 800kHz
+    TIM_TimeBaseStructure.TIM_Period = period - 1; // The counter includes both 0 and ARR.
     TIM_TimeBaseStructure.TIM_Prescaler = prescaler;
     TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
     TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
@@ -208,6 +208,7 @@ void ws2811LedStripStartTransfer(void)
     xDMA_SetCurrDataCounter(dmaRef, WS2811_DMA_BUFFER_SIZE);  // load number of bytes to be transferred
     TIM_SetCounter(timer, 0);
     TIM_Cmd(timer, ENABLE);
+    ch32DmaBarrier();
     xDMA_Cmd(dmaRef, ENABLE);
 }
 #endif
