@@ -651,7 +651,9 @@ configStreamerResult_e configWriteWord(uintptr_t address, config_streamer_buffer
         }
     }
     STATIC_ASSERT(CONFIG_STREAMER_BUFFER_SIZE == sizeof(uint32_t) * 64, "CONFIG_STREAMER_BUFFER_SIZE does not match written size");
-    FLASH_ProgramPage_Fast(address, buffer);
+    if (FLASH_ProgramPage_Fast(address, buffer) != FLASH_COMPLETE) {
+        return CONFIG_RESULT_TIMEOUT;
+    }
     const FLASH_Status status = FLASH_GetStatus();
     if (status != FLASH_COMPLETE) {
         return CONFIG_RESULT_ADDRESS_INVALID;

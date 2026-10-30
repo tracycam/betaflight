@@ -766,43 +766,68 @@ void FLASH_EraseBlock_Fast(uint32_t Block_Address)
  *
  * @param   Page_Address - The page address to be programed.
  *
- * @return  none
+ * @return  FLASH_COMPLETE or FLASH_TIMEOUT.
  */
-void FLASH_ProgramPage_Fast(uint32_t Page_Address, uint32_t *pbuf)
+static uint32_t FLASH_FastIrqSave(void)
+{
+    uint32_t state;
+    __asm volatile ("csrr %0, 0x800" : "=r" (state) : : "memory");
+    __disable_irq();
+    return state & 0x88u;
+}
+
+static void FLASH_FastIrqRestore(uint32_t state)
+{
+    __asm volatile ("fence iorw, iorw\n\tcsrs 0x800, %0" : : "r" (state) : "memory");
+}
+
+static uint32_t FLASH_FastWait(uint32_t mask)
+{
+    uint32_t timeout = ProgramTimeout;
+    while(FLASH->STATR & mask)
+    {
+        if(timeout-- == 0)
+            return 0;
+    }
+    return 1;
+}
+
+FLASH_Status FLASH_ProgramPage_Fast(uint32_t Page_Address, uint32_t *pbuf)
 {
     uint8_t size = 64;
-    uint32_t irqState;
-    __asm volatile ("csrr %0, 0x800" : "=r" (irqState) : : "memory");
-    __disable_irq();
+    const uint32_t irqState = FLASH_FastIrqSave();
+    FLASH_Status status = FLASH_TIMEOUT;
 
     Page_Address &= 0xFFFFFF00;
 
+    if(!FLASH_FastWait(SR_BSY | SR_WR_BSY))
+        goto done;
     FLASH->CTLR |= CR_PAGE_PG;
-    while(FLASH->STATR & SR_BSY)
-        ;
-    while(FLASH->STATR & SR_WR_BSY)
-        ;
 
     while(size)
     {
-        *(uint32_t *)Page_Address = *(uint32_t *)pbuf;
+        *(uint32_t *)(uintptr_t)Page_Address = *(uint32_t *)pbuf;
         Page_Address += 4;
         pbuf += 1;
         size -= 1;
 #ifdef Core_V5F
         __asm("fence");
 #endif
-        while(FLASH->STATR & SR_WR_BSY)
-            ;
+        if(!FLASH_FastWait(SR_WR_BSY))
+            goto done;
     }
 
     FLASH->CTLR |= CR_PG_STRT;
-    while(FLASH->STATR & SR_BSY)
-        ;
-    FLASH->CTLR &= ~CR_PAGE_PG;
+    if(!FLASH_FastWait(SR_BSY))
+        goto done;
+    status = FLASH_COMPLETE;
 
-    irqState &= 0x88u;
-    __asm volatile ("fence iorw, iorw\n\tcsrs 0x800, %0" : : "r" (irqState) : "memory");
+done:
+    /* Do not change programming mode while the controller is still busy. */
+    if(!(FLASH->STATR & (SR_BSY | SR_WR_BSY)))
+        FLASH->CTLR &= ~CR_PAGE_PG;
+    FLASH_FastIrqRestore(irqState);
+    return status;
 }
 
 /*********************************************************************

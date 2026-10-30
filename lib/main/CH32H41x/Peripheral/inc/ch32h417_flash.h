@@ -117,7 +117,7 @@ FLASH_Status FLASH_WaitForLastOperation(uint32_t Timeout);
 void FLASH_Unlock_Fast(void);
 void FLASH_Lock_Fast(void);
 void FLASH_EraseBlock_Fast(uint32_t Block_Address);
-void FLASH_ProgramPage_Fast(uint32_t Page_Address, uint32_t* pbuf);
+FLASH_Status FLASH_ProgramPage_Fast(uint32_t Page_Address, uint32_t* pbuf);
 void FLASH_Enhance_Mode(FunctionalState NewState);
 void FLASH_Access_Clock_Cfg(uint32_t FLASH_Access_CLK);
 void FLASH_LP_Cmd(FunctionalState NewState);

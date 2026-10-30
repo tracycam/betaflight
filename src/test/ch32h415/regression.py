@@ -162,13 +162,57 @@ int main(void) {
     puts("all 16-bit divisors select the smallest supported non-faster clock");
 }
 ''')
+run('flash_fast_wait', '''
+#define ProgramTimeout 8
+static struct { uint32_t STATR; } registers;
+#define FLASH (&registers)
+''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','static uint32_t FLASH_FastWait(') + '''
+int main(void) {
+    registers.STATR=0;
+    if (!FLASH_FastWait(3)) return 1;
+    registers.STATR=1;
+    if (FLASH_FastWait(1)) return 2;
+    if (!FLASH_FastWait(2)) return 3;
+    puts("busy and write-busy polling terminate");
+}
+''')
+run('flash_fast_timeout', '''
+#define SR_BSY 1u
+#define SR_WR_BSY 2u
+#define CR_PAGE_PG 0x10000u
+#define CR_PG_STRT 0x200000u
+typedef enum { FLASH_COMPLETE, FLASH_TIMEOUT } FLASH_Status;
+static struct { uint32_t STATR, CTLR; } registers;
+#define FLASH (&registers)
+static unsigned waits, failAt, restored;
+static uint32_t FLASH_FastIrqSave(void) { return 0x88; }
+static void FLASH_FastIrqRestore(uint32_t state) { restored=state; }
+static uint32_t FLASH_FastWait(uint32_t mask) {
+    waits++;
+    if (waits == failAt) { registers.STATR=mask; return 0; }
+    return 1;
+}
+static uint32_t flash[64] __attribute__((aligned(256)));
+''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_ProgramPage_Fast(') + '''
+int main(void) {
+    uint32_t input[64]; for (unsigned i=0; i<64; i++) input[i]=i+1;
+    if ((uintptr_t)flash > UINT32_MAX) return 1;
+    failAt=1; registers.STATR=0; registers.CTLR=0; waits=restored=0;
+    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_TIMEOUT || registers.CTLR || restored!=0x88) return 2;
+    failAt=2; registers.STATR=0; registers.CTLR=0; waits=restored=0; memset(flash,0,sizeof(flash));
+    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_TIMEOUT || flash[0]!=1 || flash[1] || !(registers.CTLR & CR_PAGE_PG) || (registers.CTLR & CR_PG_STRT) || restored!=0x88) return 3;
+    failAt=0; registers.STATR=0; registers.CTLR=0; waits=restored=0;
+    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_COMPLETE || memcmp(flash,input,sizeof(flash)) || (registers.CTLR & CR_PAGE_PG) || restored!=0x88) return 4;
+    puts("timeout stops writes, preserves busy mode and restores interrupts");
+}
+''',extra_flags=('-fno-pie','-no-pie'))
 run('ch32_config_flash_bounds', '''
 #define CH32H4
 #define CONFIG_STREAMER_BUFFER_SIZE 256
 #define STATIC_ASSERT(c, m) _Static_assert(c, m)
 typedef uint32_t config_streamer_buffer_type_t;
-typedef enum { CONFIG_RESULT_SUCCESS=0, CONFIG_RESULT_FAILURE=-1, CONFIG_RESULT_ADDRESS_INVALID=-3 } configStreamerResult_e;
-typedef enum { FLASH_COMPLETE, FLASH_ERROR } FLASH_Status;
+typedef enum { CONFIG_RESULT_SUCCESS=0, CONFIG_RESULT_FAILURE=-1, CONFIG_RESULT_ADDRESS_INVALID=-3, CONFIG_RESULT_TIMEOUT=-4 } configStreamerResult_e;
+typedef enum { FLASH_COMPLETE, FLASH_ERROR, FLASH_TIMEOUT } FLASH_Status;
 static uint8_t flash[16384] __attribute__((aligned(8192)));
 #define __config_start flash[0]
 #define __config_end flash[16384]
@@ -176,14 +220,17 @@ static uint32_t flashMode;
 #define FLASH_CFGR0_BASE ((uintptr_t)&flashMode)
 static unsigned erases, writes, eraseStep;
 static bool suppressWrite;
+static bool timeoutWrite;
 static FLASH_Status FLASH_ErasePage(uintptr_t addr) {
     if (addr != (uintptr_t)flash + erases * eraseStep) return FLASH_ERROR;
     erases++;
     return FLASH_COMPLETE;
 }
-static void FLASH_ProgramPage_Fast(uintptr_t addr, uint32_t *buf) {
+static FLASH_Status FLASH_ProgramPage_Fast(uintptr_t addr, uint32_t *buf) {
+    if (timeoutWrite) return FLASH_TIMEOUT;
     if (!suppressWrite) memcpy((void *)addr, buf, CONFIG_STREAMER_BUFFER_SIZE);
     writes++;
+    return FLASH_COMPLETE;
 }
 static FLASH_Status FLASH_GetStatus(void) { return FLASH_COMPLETE; }
 ''' + fn('src/platform/common/stm32/config_flash.c','static bool ch32ConfigAddressIsValid(')
@@ -206,7 +253,10 @@ int main(void) {
     suppressWrite=true;
     erases=0;
     if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_FAILURE) return 7;
-    puts("single/dual erase geometry, boundaries and silent write failure");
+    erases=0;
+    timeoutWrite=true;
+    if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_TIMEOUT) return 8;
+    puts("single/dual erase geometry, boundaries, timeout and silent write failure");
 }
 ''')
 run('pfic', '#define PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL\n#include "platform/priority.h"\nstatic volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'
