@@ -39,7 +39,15 @@ static int cdc_acm_class_interface_request_handler(uint8_t busid, struct usb_set
             /*                                        4 - Space                            */
             /* 6      | bDataBits  |   1   | Number Data bits (5, 6, 7, 8 or 16).          */
             /*******************************************************************************/
-            memcpy(&line_coding, *data, setup->wLength);
+            if (!data || !*data || !len || setup->wLength != sizeof(line_coding) || *len < sizeof(line_coding)) {
+                return -1;
+            }
+            memcpy(&line_coding, *data, sizeof(line_coding));
+            if (line_coding.dwDTERate == 0 || line_coding.dwDTERate > UINT32_MAX / 4 ||
+                line_coding.bCharFormat >= sizeof(stop_name) / sizeof(stop_name[0]) ||
+                line_coding.bParityType >= sizeof(parity_name) / sizeof(parity_name[0])) {
+                return -1;
+            }
             USB_LOG_DBG("Set intf:%d linecoding <%d %d %s %s>\r\n",
                         intf_num,
                         (unsigned int)line_coding.dwDTERate,

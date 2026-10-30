@@ -502,6 +502,8 @@ run('usb_cdc_callbacks', '''
 #define CDC_REQUEST_SET_CONTROL_LINE_STATE 2
 #define CDC_REQUEST_GET_LINE_CODING 3
 #define CDC_REQUEST_SEND_BREAK 4
+static const char *stop_name[] = { "1", "1.5", "2" };
+static const char *parity_name[] = { "N", "O", "E", "M", "S" };
 struct usb_setup_packet { uint8_t bRequest; uint16_t wValue, wIndex, wLength; };
 struct cdc_line_coding { uint32_t dwDTERate; uint8_t bCharFormat, bParityType, bDataBits; } __attribute__((packed));
 static struct cdc_line_coding cdc_vcp_line_coding;
@@ -527,6 +529,20 @@ int main(void) {
     struct cdc_line_coding coding={230400,0,0,8}; uint8_t *data=(uint8_t *)&coding; uint32_t len=7;
     struct usb_setup_packet setup={.bRequest=CDC_REQUEST_SET_LINE_CODING,.wLength=7};
     if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) || baudCalls!=1 || seenBaud!=230400 || cdc_vcp_line_coding.dwDTERate!=230400) return 1;
+    for (unsigned n=0; n<32; n++) {
+        if (n==7) continue;
+        setup.wLength=n; len=n;
+        if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) != -1 || baudCalls!=1) return 4;
+    }
+    setup.wLength=len=7;
+    coding.dwDTERate=0;
+    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) != -1) return 5;
+    coding.dwDTERate=0x40000000u;
+    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) != -1) return 6;
+    coding.dwDTERate=230400; coding.bParityType=5;
+    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) != -1) return 7;
+    coding.bParityType=0; coding.bCharFormat=3;
+    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) != -1 || baudCalls!=1) return 8;
     setup.bRequest=CDC_REQUEST_SET_CONTROL_LINE_STATE; setup.wValue=3;
     if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) || stateCalls!=1 || seenState!=3) return 2;
     CDC_SetCtrlLineStateCb(NULL,NULL); setup.wValue=0;
