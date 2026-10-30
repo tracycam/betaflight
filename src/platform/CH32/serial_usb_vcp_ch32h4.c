@@ -70,6 +70,7 @@ volatile uint32_t UserTxBufPtrIn = 0;
 /* Increment this pointer or roll it back to start address when data are sent over USB */
 volatile uint32_t UserTxBufPtrOut = 0;
 static volatile uint32_t lastBuffsize = 0;
+static volatile bool usbHostPortOpen;
 
 // volatile uint32_t APP_Rx_ptr_out = 0;
 // volatile uint32_t APP_Rx_ptr_in = 0;
@@ -110,6 +111,7 @@ void usbVcpBaudRateChanged(uint32_t baud)
 
 void usbVcpControlLineStateChanged(uint16_t state)
 {
+    usbHostPortOpen = (state & CTRL_LINE_STATE_DTR) != 0;
     if (ctrlLineStateCb) {
         ctrlLineStateCb(ctrlLineStateCbContext, state);
     }
@@ -212,6 +214,7 @@ void usbVcpResetState(void)
         UserTxBufPtrIn = 0;
         UserTxBufPtrOut = 0;
         lastBuffsize = 0;
+        usbHostPortOpen = false;
     }
 }
 
@@ -316,7 +319,12 @@ static void usbVcpSetBaudRateCb(serialPort_t *instance, void (*cb)(serialPort_t 
 static bool isUsbVcpTransmitBufferEmpty(const serialPort_t *instance)
 {
     UNUSED(instance);
-    return true;
+    bool empty;
+    ATOMIC_BLOCK(NVIC_PRIO_USB) {
+        empty = !usbIsConfigured() || !usbHostPortOpen ||
+            (!vcpPort.txAt && UserTxBufPtrOut == UserTxBufPtrIn && !lastBuffsize && !ep_tx_busy_flag);
+    }
+    return empty;
 }
 
 static uint32_t usbVcpAvailable(const serialPort_t *instance)

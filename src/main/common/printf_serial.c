@@ -49,6 +49,11 @@ int tfp_printf(const char *fmt, ...)
     va_start(va, fmt);
     int written = tfp_format(stdout_putp, stdout_putf, fmt, va);
     va_end(va);
+#if defined(PLATFORM_VCP_TX_STALL_TIMEOUT_MS) && defined(USE_VCP)
+    if (printfSerialPort->identifier == SERIAL_PORT_USB_VCP) {
+        waitForSerialPortToFinishTransmitting(printfSerialPort);
+    } else
+#endif
     while (!isSerialTransmitBufferEmpty(printfSerialPort));
     return written;
 }

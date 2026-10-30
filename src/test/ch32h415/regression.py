@@ -521,6 +521,8 @@ static void (*baudRateCb)(void *, uint32_t);
 static void *baudRateCbContext;
 static void (*ctrlLineStateCb)(void *, uint16_t);
 static void *ctrlLineStateCbContext;
+static bool usbHostPortOpen;
+#define CTRL_LINE_STATE_DTR 1
 static void usbd_cdc_acm_set_dtr(uint8_t bus, uint8_t intf, bool value) { (void)bus; (void)intf; (void)value; }
 static void usbd_cdc_acm_set_rts(uint8_t bus, uint8_t intf, bool value) { (void)bus; (void)intf; (void)value; }
 static void usbd_cdc_acm_send_break(uint8_t bus, uint8_t intf) { (void)bus; (void)intf; }
@@ -554,10 +556,61 @@ int main(void) {
     coding.bParityType=0; coding.bCharFormat=3;
     if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) != -1 || baudCalls!=1) return 8;
     setup.bRequest=CDC_REQUEST_SET_CONTROL_LINE_STATE; setup.wValue=3;
-    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) || stateCalls!=1 || seenState!=3) return 2;
+    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) || stateCalls!=1 || seenState!=3 || !usbHostPortOpen) return 2;
     CDC_SetCtrlLineStateCb(NULL,NULL); setup.wValue=0;
-    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) || stateCalls!=1) return 3;
+    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) || stateCalls!=1 || usbHostPortOpen) return 3;
     puts("CDC control requests deliver baud and combined line state once");
+}
+''')
+run('usb_tx_empty_state', '''
+#define UNUSED(x) ((void)(x))
+#define NVIC_PRIO_USB 0
+#define ATOMIC_BLOCK(x) for (int once=1; once; once=0)
+typedef int serialPort_t;
+static struct { uint32_t txAt; } vcpPort;
+static uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
+static uint8_t ep_tx_busy_flag;
+static bool usbHostPortOpen, configured;
+static bool usbIsConfigured(void) { return configured; }
+''' + fn(usb,'static bool isUsbVcpTransmitBufferEmpty(') + '''
+int main(void) {
+    UserTxBufPtrIn=5; ep_tx_busy_flag=1;
+    if (!isUsbVcpTransmitBufferEmpty(NULL)) return 1;
+    configured=true;
+    if (!isUsbVcpTransmitBufferEmpty(NULL)) return 2;
+    usbHostPortOpen=true;
+    if (isUsbVcpTransmitBufferEmpty(NULL)) return 3;
+    UserTxBufPtrOut=5;
+    if (isUsbVcpTransmitBufferEmpty(NULL)) return 4;
+    ep_tx_busy_flag=0; lastBuffsize=5;
+    if (isUsbVcpTransmitBufferEmpty(NULL)) return 5;
+    lastBuffsize=0; vcpPort.txAt=1;
+    if (isUsbVcpTransmitBufferEmpty(NULL)) return 6;
+    vcpPort.txAt=0;
+    if (!isUsbVcpTransmitBufferEmpty(NULL)) return 7;
+    puts("disconnected, closed, buffered, queued, in-flight, ZLP and empty states");
+}
+''')
+run('usb_tx_wait_stall', '''
+#define PLATFORM_VCP_TX_STALL_TIMEOUT_MS 500
+#define USE_VCP
+#define SERIAL_PORT_USB_VCP 1
+typedef struct { int identifier; } serialPort_t;
+static uint32_t now, freeBytes;
+static bool empty;
+static uint32_t millis(void) { return now; }
+static uint32_t serialTxBytesFree(serialPort_t *p) { (void)p; return freeBytes; }
+static bool isSerialTransmitBufferEmpty(serialPort_t *p) { (void)p; return empty; }
+static void delay(int ms) { now+=ms; if (now == 300) freeBytes++; if (now == 900) empty=true; }
+''' + fn('src/main/io/serial.c','void waitForSerialPortToFinishTransmitting(') + '''
+int main(void) {
+    serialPort_t p={SERIAL_PORT_USB_VCP};
+    waitForSerialPortToFinishTransmitting(&p);
+    if (now != 800 || empty) return 1;
+    now=0; empty=true;
+    waitForSerialPortToFinishTransmitting(&p);
+    if (now != 0) return 2;
+    puts("host stall is bounded and the timeout resets when transmission progresses");
 }
 ''')
 for mps in (64, 512):
