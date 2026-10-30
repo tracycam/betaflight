@@ -14,6 +14,7 @@
 	.global	_start
 	.align	2
 _start:
+	csrci mstatus, 8
 	# j	handle_reset
     lui ra, %Hi(handle_reset)
     jr  %Lo(handle_reset)(ra)
@@ -571,14 +572,14 @@ handle_reset:
 /* Enable interrupt nesting and hardware stack */
     li t0, 0x0B
     csrw 0x804, t0
-/* Enable floating point and global interrupt, configure privileged mode */
-   	li t0, 0x7888           
-   	csrw mstatus, t0
-
 /* Configure the interrupt vector table recognition mode and entry address mode */
  	la t0, _vector_base
     ori t0, t0, 3           
 	csrw mtvec, t0
+
+/* Enable floating point; mret restores interrupt enable when entering main. */
+    li t0, 0x7880
+    csrw mstatus, t0
 
     la a0, __libc_fini_array
     call atexit
