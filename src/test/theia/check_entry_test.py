@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Exercise both Bootloader validation and the low-to-linked alias switch."""
 import struct
+import sys
+
+sys.dont_write_bytecode = True
 from check_entry import check_v5f_entry
 
 good = (0x0040006f, 0x30047073, 0x080160b7, 0x01208067)

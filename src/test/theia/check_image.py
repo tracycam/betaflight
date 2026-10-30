@@ -5,6 +5,8 @@ import json
 import pathlib
 import struct
 import sys
+
+sys.dont_write_bytecode = True
 from check_entry import check_v5f_entry
 elf_path, bin_path = map(pathlib.Path, sys.argv[1:3])
 elf, binary = elf_path.read_bytes(), bin_path.read_bytes()
