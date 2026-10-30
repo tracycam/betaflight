@@ -159,7 +159,7 @@ void TIM12_IRQHandler(void)
 
     if (ep_tx_busy_flag == 0) { //pre finish
         if (lastBuffsize) {
-            bool needZeroLengthPacket = lastBuffsize % 64 == 0;
+            bool needZeroLengthPacket = lastBuffsize % CDC_MAX_MPS == 0;
             UserTxBufPtrOut += lastBuffsize;
             if (UserTxBufPtrOut == APP_TX_DATA_SIZE) {
                 UserTxBufPtrOut = 0;
@@ -208,7 +208,7 @@ void usb_int_rxsof_handler(void)     //1ms
         uint32_t buffsize;
         if (ep_tx_busy_flag == 0) {   //pre finish
             if (lastBuffsize) {
-                bool needZeroLengthPacket = lastBuffsize % 64 == 0;
+                bool needZeroLengthPacket = lastBuffsize % CDC_MAX_MPS == 0;
                 UserTxBufPtrOut += lastBuffsize;
                 if (UserTxBufPtrOut == APP_TX_DATA_SIZE) {
                     UserTxBufPtrOut = 0;

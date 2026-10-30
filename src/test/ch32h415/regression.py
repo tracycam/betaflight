@@ -321,6 +321,40 @@ int main(void){usart_t reg={0}; uartHardware_t h={1,0,&reg};uartDevice_t d={.har
 ''')
 
 usb='src/platform/CH32/serial_usb_vcp_ch32h4.c'
+for mps in (64, 512):
+ run('usb_zlp_mps_'+str(mps), '''
+#define APP_TX_DATA_SIZE 2048
+#define APP_TX_BLOCK_SIZE 512
+#define CDC_MAX_MPS TEST_MPS
+static uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
+static uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
+static uint8_t ep_tx_busy_flag;
+static unsigned sendCount, lastLength;
+static int usb_vcp_send_data(int bus, uint8_t *buffer, unsigned length) {
+    (void)bus; (void)buffer;
+    sendCount++; lastLength=length; ep_tx_busy_flag=1;
+    return 0;
+}
+''' + fn(usb,'void usb_int_rxsof_handler(void)') + '''
+static void tick(void) { for (int i=0; i<17; i++) usb_int_rxsof_handler(); }
+int main(void) {
+    UserTxBufPtrIn=64;
+    tick();
+    if (sendCount != 1 || lastLength != 64) return 1;
+    ep_tx_busy_flag=0;
+    tick();
+    if (sendCount != (TEST_MPS == 64 ? 2u : 1u)) return 2;
+    ep_tx_busy_flag=0;
+    UserTxBufPtrIn=576;
+    tick();
+    if (lastLength != 512) return 3;
+    ep_tx_busy_flag=0;
+    unsigned before=sendCount;
+    tick();
+    if (sendCount != before+1 || lastLength != 0) return 4;
+    puts("ZLP follows the configured bulk endpoint packet size");
+}
+''',extra_flags=('-DTEST_MPS='+str(mps),))
 pre='''
 #define USB_TIMEOUT 50
 #define UNUSED(x) ((void)(x))
