@@ -29,12 +29,39 @@ pf='src/platform/CH32/include/platform/platform.h'
 host_include=out/'include'
 host_include.mkdir(exist_ok=True)
 (host_include/'platform.h').write_text('/* The host tests supply simulated peripherals. */\n')
-run('pfic', '#include "platform/priority.h"\nstatic volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'
+run('pfic', '#define PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL\n#include "platform/priority.h"\nstatic volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'
     +fn(pf,'__attribute__((always_inline)) static inline uint32_t __get_BASEPRI')
     +fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_nb')
     +fn(pf,'__attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb')
     +(root/'src/test/ch32h415/pfic_test.c').read_text(),
     extra_flags=('-Wall','-Wextra','-I'+str(host_include),'-I'+str(root/'src/main'),'-I'+str(root/'src/platform/CH32/include')))
+
+platform_source=(root/pf).read_text()
+macro_start=platform_source.index('#define ATOMIC_BLOCK_ALL()')
+macro_end=platform_source.index('\n', platform_source.index('\n', macro_start)+1)
+atomic_macro=platform_source[macro_start:macro_end]
+run('global_irq_scope', '''
+static uint32_t csr;
+static uint32_t ch32IrqSave(void) { uint32_t state = csr & 0x88u; csr &= ~0x88u; return state; }
+static void ch32IrqRestore(uint32_t *state) { csr |= *state; }
+''' + atomic_macro + '''
+static int earlyReturn(void) { ATOMIC_BLOCK_ALL() { return csr == 0; } return 0; }
+int main(void) {
+    for (unsigned i = 0; i < 4; i++) {
+        csr = ((i & 1) ? 0x08 : 0) | ((i & 2) ? 0x80 : 0);
+        const uint32_t initial = csr;
+        ATOMIC_BLOCK_ALL() {
+            if (csr != 0) return 1;
+            ATOMIC_BLOCK_ALL() { if (csr != 0) return 2; }
+            if (csr != 0) return 3;
+        }
+        if (csr != initial || !earlyReturn() || csr != initial) return 4;
+        ATOMIC_BLOCK_ALL() { break; }
+        if (csr != initial) return 5;
+    }
+    puts("nested, return and break preserve each enable bit");
+}
+''')
 
 bb='src/platform/CH32/dshot_bitbang.c'
 pre='''

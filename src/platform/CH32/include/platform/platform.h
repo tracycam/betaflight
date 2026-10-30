@@ -85,6 +85,24 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 
 #define PLATFORM_CUSTOM_BASEPRI_NB
 
+// QingKe global interrupt enable is in CSR 0x800. Save and clear both
+// enable bits atomically, then restore only those that were originally set.
+__attribute__((always_inline)) static inline uint32_t ch32IrqSave(void)
+{
+    uint32_t state;
+    asm volatile ("csrrc %0, 0x800, %1" : "=r" (state) : "r" (0x88u) : "memory");
+    return state & 0x88u;
+}
+
+__attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state)
+{
+    asm volatile ("fence iorw, iorw\n\tcsrs 0x800, %0" : : "r" (*state) : "memory");
+}
+
+#define PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL
+#define ATOMIC_BLOCK_ALL() for (uint32_t __irq_save __attribute__((__cleanup__(ch32IrqRestore), __unused__)) = ch32IrqSave(), \
+                                      __todo = 1; __todo; __todo = 0)
+
 #ifndef CH32H4
 #define CH32H4
 #endif
