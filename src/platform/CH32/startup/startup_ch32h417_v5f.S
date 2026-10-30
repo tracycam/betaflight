@@ -14,10 +14,16 @@
 	.global	_start
 	.align	2
 _start:
-    /* The paired bootloader recognizes a forward JAL at the V5F entry. */
+    /* The bootloader validates a forward JAL and wakes V5F via the low
+     * Flash alias. Switch to the linked 0x08000000 alias before any
+     * PC-relative RAM address calculation. */
     .option push
     .option norvc
-    j handle_reset
+    j .Lentry_after_jump
+.Lentry_after_jump:
+    csrci mstatus, 8
+    lui ra, %hi(handle_reset)
+    jr %lo(handle_reset)(ra)
     .option pop
     .section    .vector,"ax",@progbits
     .align  1
@@ -428,7 +434,6 @@ USART_WKUP_IRQHandler:
 	.weak	handle_reset
 	.align	1
 handle_reset:
-	csrci mstatus, 8
 .option push
 .option	norelax
 	la gp, __global_pointer$
