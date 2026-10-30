@@ -112,8 +112,6 @@
 
 
 // #undef USE_DSHOT_BITBANG
-#define USE_DSHOT_BITBAND
-
 #define USE_BEEPER
 
 // #define USE_VTX
