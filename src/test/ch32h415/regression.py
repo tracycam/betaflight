@@ -1,8 +1,9 @@
 from pathlib import Path
 import subprocess
+import tempfile
 root=Path(__file__).resolve().parents[3]
-out=Path('/tmp/ch32h415-regression')
-out.mkdir(parents=True, exist_ok=True)
+temporary_directory=tempfile.TemporaryDirectory(prefix='ch32h415-regression-')
+out=Path(temporary_directory.name)
 common='#include <stdint.h>\n#include <stdbool.h>\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n'
 def fn(rel,marker):
  p=root/rel;s=p.read_text();start=s.index(marker);b=s.index('{',start);n=1;i=b+1
