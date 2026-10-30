@@ -1115,7 +1115,7 @@ pre='''
 #define ENABLE 1
 #define DISABLE 0
 typedef struct {uint32_t CFGR,CNTR,MADDR;} dma_t;
-typedef struct {uint32_t STATR,DATAR,BRR,CTLR1;} USART_TypeDef;
+typedef struct {uint16_t STATR,reserved0,DATAR,reserved1,BRR,reserved2,CTLR1,reserved3;} USART_TypeDef;
 #define IS_DMA_ENABLED(d) (((dma_t *)(d))->CFGR & 1)
 typedef struct {void *USARTx;dma_t *txDMAResource,*rxDMAResource;bool txDMAEmpty,txCompletePending;struct{uint8_t txBuffer[8];unsigned txBufferHead,txBufferTail,txBufferSize;uint8_t rxBuffer[8];unsigned rxBufferHead,rxBufferSize;void(*rxCallback)(uint32_t,void*);void*rxCallbackData;void(*idleCallback)(void);}port;} uartPort_t;
 typedef struct {uartPort_t port;} uartDevice_t;
