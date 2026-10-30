@@ -10,6 +10,14 @@ elf, binary = elf_path.read_bytes(), bin_path.read_bytes()
 assert elf[:6] == b'\x7fELF\x01\x01'
 header = struct.unpack_from('<16sHHIIIIIHHHHHH', elf)
 assert header[2] == 243 and header[4] == 0x08016000
+entry, = struct.unpack_from('<I', binary)
+# The paired bootloader accepts a positive in-region JAL x0, or a forward
+# compressed C.J. Check the shipped entry, not just the ELF entry address.
+if entry & 0x80000fff == 0x0000006f:
+    offset = ((entry >> 20) & 0x7fe) | ((entry >> 9) & 0x800) | (entry & 0xff000)
+    assert 4 <= offset < 0x080F0000 - 0x08016000
+else:
+    assert entry & 0xf003 == 0xa001 and entry & 0x0ffc
 phoff, phsize, phnum = header[5], header[9], header[10]
 segments = []
 for i in range(phnum):

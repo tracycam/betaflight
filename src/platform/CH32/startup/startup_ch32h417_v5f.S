@@ -14,10 +14,11 @@
 	.global	_start
 	.align	2
 _start:
-	csrci mstatus, 8
-	# j	handle_reset
-    lui ra, %Hi(handle_reset)
-    jr  %Lo(handle_reset)(ra)
+    /* The paired bootloader recognizes a forward JAL at the V5F entry. */
+    .option push
+    .option norvc
+    j handle_reset
+    .option pop
     .section    .vector,"ax",@progbits
     .align  1
 _vector_base:
@@ -427,6 +428,7 @@ USART_WKUP_IRQHandler:
 	.weak	handle_reset
 	.align	1
 handle_reset:
+	csrci mstatus, 8
 .option push
 .option	norelax
 	la gp, __global_pointer$
