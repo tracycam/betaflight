@@ -104,6 +104,7 @@
 #define USE_PERSISTENT_MSC_RTC
 
 #define USE_ADC
+#define USE_PLATFORM_ADC_TEMPERATURE
 
 // Remove these undefines as support is added
 #undef USE_TRANSPONDER

@@ -25,7 +25,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
-#include <math.h>
 
 #include "platform.h"
 
@@ -140,22 +139,20 @@ static void setScalingFactors(void)
 {
     // The expected reading for 1.2V internal reference if external vref+ was 3.3V
     adcVREFINTCAL = VREFINT_EXPECTED;
-
-    // adcTSCAL1 needs to be the raw ADC value at 25C, but we can't adjust it for
-    // VREF+ because we haven't calculated it yet So this will have to be
-    // aproximate (and the use should be fixed at some point)
-    adcTSCAL1 = (TEMPSENSOR_CAL1_V * 4095.0f) / 3.3f;
-
-    // TEMPSENSOR_SLOPE is given in mv/C.
-    // adcTSSlopeK has the opposite sign compared to the CH32 standard because
-    // adcInternalComputeTemperature subtracts the calibration value from the
-    // reading where as the CH32 docs subtract the reading from the calibration.
-    // 3300/4095 converts the reading to mV and the factor of 1000 is needed to
-    // prevent the slope from rounding to 0. The intermediate result when this is
-    // used is in mC, and adcInternalComputeTemperature then divides by 1000 to
-    // get an answer in C
-    adcTSSlopeK = lrintf(-3300.0f * 1000.0f / 4095.0f / TEMPSENSOR_SLOPE);
 }
+
+#ifdef USE_ADC_INTERNAL
+#define CH32_TS_CAL_ADDRESS 0x1FFFF76CU
+int16_t adcInternalComputeTemperature(uint16_t tempAdcValue, uint16_t vrefValue)
+{
+    const uint32_t calibration = *(volatile const uint32_t *)(uintptr_t)CH32_TS_CAL_ADDRESS;
+    const int32_t referenceVoltage = calibration & 0xFFFFU;
+    const int32_t referenceTemperature = calibration >> 16;
+    const int32_t delta = ((int32_t)(((uint32_t)tempAdcValue * vrefValue) / 4096U) - referenceVoltage) * 10;
+    const int32_t rounded = (delta >= 0 ? delta + 21 : delta - 21) / 43;
+    return referenceTemperature - rounded;
+}
+#endif
 
 void adcInit(const adcConfig_t *config)
 {

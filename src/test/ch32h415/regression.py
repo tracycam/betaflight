@@ -52,6 +52,21 @@ int main(void) {
     puts("global masking uses the non-spinning path; first tick returns normally");
 }
 ''')
+run('ch32_adc_temperature', '''
+static uint32_t fakeCalibration;
+#define CH32_TS_CAL_ADDRESS ((uintptr_t)&fakeCalibration)
+''' + fn('src/platform/CH32/adc_ch32h41x.c','int16_t adcInternalComputeTemperature(') + '''
+int main(void) {
+    fakeCalibration=(30u << 16) | 1000u;
+    if (adcInternalComputeTemperature(1000, 4096) != 30) return 1;
+    if (adcInternalComputeTemperature(997, 4096) != 31) return 2;
+    if (adcInternalComputeTemperature(1003, 4096) != 29) return 3;
+    if (adcInternalComputeTemperature(998, 4096) != 30) return 4;
+    if (adcInternalComputeTemperature(1002, 4096) != 30) return 5;
+    (void)adcInternalComputeTemperature(UINT16_MAX, UINT16_MAX);
+    puts("factory reference and symmetric rounding above and below calibration");
+}
+''')
 run('exti_unregistered', '''
 typedef struct extiCallbackRec_s extiCallbackRec_t;
 struct extiCallbackRec_s { void (*fn)(extiCallbackRec_t *); };
