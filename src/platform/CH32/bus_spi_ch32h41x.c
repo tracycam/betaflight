@@ -56,8 +56,13 @@ static SPI_InitTypeDef defaultInit = {
 static uint16_t spiDivisorToBRbits(const SPI_TypeDef *instance, uint16_t divisor)
 {
     UNUSED(instance);
-    divisor = constrain(divisor, 2, 256);
-    return (ffs(divisor) - 2) << 3; // SPI_CTLR1_BR_Pos
+    uint16_t actual = 2;
+    uint16_t br = 0;
+    while (actual < divisor && actual < 256) {
+        actual <<= 1;
+        br++;
+    }
+    return br << 3; // SPI_CTLR1_BR_Pos
 }
 
 static void spiSetDivisorBRreg(SPI_TypeDef *instance, uint16_t divisor)

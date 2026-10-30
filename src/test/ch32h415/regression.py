@@ -149,6 +149,19 @@ int main(void) {
     puts("bit 31 and reset enable semantics");
 }
 ''')
+run('spi_divisor_rounding', '''
+#define UNUSED(x) ((void)(x))
+typedef struct { int unused; } SPI_TypeDef;
+''' + fn('src/platform/CH32/bus_spi_ch32h41x.c','static uint16_t spiDivisorToBRbits(') + '''
+int main(void) {
+    for (unsigned divisor=0; divisor<=UINT16_MAX; divisor++) {
+        const unsigned actual = 2u << (spiDivisorToBRbits(NULL, divisor) >> 3);
+        const unsigned minimum = divisor < 2 ? 2 : divisor > 256 ? 256 : divisor;
+        if (actual < minimum || actual > 256 || (actual > 2 && actual/2 >= minimum)) return 1;
+    }
+    puts("all 16-bit divisors select the smallest supported non-faster clock");
+}
+''')
 run('ch32_config_flash_bounds', '''
 #define CH32H4
 #define CONFIG_STREAMER_BUFFER_SIZE 256
