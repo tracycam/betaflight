@@ -22,14 +22,11 @@
 #ifdef USE_DMA
 
 #include "drivers/dma_impl.h"
-#if defined(CH32H4)
-#include "platform/dma.h"
-#endif
 
 bool dmaAllocate(dmaIdentifier_e identifier, resourceOwner_e owner, uint8_t resourceIndex)
 {
-#if defined(CH32H4) && defined(USE_THEIA_OSD)
-    if (identifier == DMA2_CH6_HANDLER) {
+#ifdef USE_PLATFORM_DMA_FILTER
+    if (dmaIsReserved(identifier)) {
         return false;
     }
 #endif

@@ -57,6 +57,13 @@ dmaChannelDescriptor_t dmaDescriptors[DMA_LAST_HANDLER] = {
     DEFINE_DMA_CHANNEL(DMA2, 8, 28),
 };
 
+#ifdef USE_PLATFORM_DMA_FILTER
+bool dmaIsReserved(dmaIdentifier_e identifier)
+{
+    return identifier == DMA2_CH6_HANDLER;
+}
+#endif
+
 /*
  * DMA IRQ Handlers
  * if use hardware push&pop,key woard "WCH-Interrupt-fast" is needed

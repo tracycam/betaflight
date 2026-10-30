@@ -96,6 +96,26 @@ int main(void) {
     puts("combined flags target the selected channel");
 }
 ''', extra_flags=('-Wall','-Wextra','-I'+str(host_include),'-I'+str(root/'src/main'),'-I'+str(root/'src/platform/CH32/include')))
+run('theia_dma_reservation', '''
+#define USE_PLATFORM_DMA_FILTER
+#define DMA2_CH6_HANDLER 14
+#define DMA_IDENTIFIER_TO_INDEX(x) ((x)-1)
+#define OWNER_FREE 0
+typedef int dmaIdentifier_e;
+typedef int resourceOwner_e;
+typedef struct { struct { int owner, index; } resourceOwner; } dmaChannelDescriptor_t;
+static dmaChannelDescriptor_t dmaDescriptors[16];
+static int dmaGetHandlerCount(void) { return 16; }
+''' + fn('src/platform/CH32/dma_ch32h41x.c','bool dmaIsReserved(')
+    + fn('src/main/drivers/dma.c','bool dmaAllocate(') + '''
+int main(void) {
+    if (dmaAllocate(DMA2_CH6_HANDLER, 2, 1)) return 1;
+    if (dmaDescriptors[13].resourceOwner.owner != OWNER_FREE) return 2;
+    if (!dmaAllocate(13, 2, 1) || dmaAllocate(13, 3, 1)) return 3;
+    if (dmaAllocate(0, 2, 1) || dmaAllocate(17, 2, 1)) return 4;
+    puts("Theia DMA channel remains reserved; ordinary allocation is unchanged");
+}
+''')
 run('rcc_high_bit', '''
 typedef uint32_t rccPeriphTag_t;
 typedef enum { DISABLE, ENABLE } FunctionalState;

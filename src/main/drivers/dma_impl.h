@@ -23,3 +23,7 @@
 #include "drivers/dma.h"
 
 extern dmaChannelDescriptor_t dmaDescriptors[];
+
+#ifdef USE_PLATFORM_DMA_FILTER
+bool dmaIsReserved(dmaIdentifier_e identifier);
+#endif
