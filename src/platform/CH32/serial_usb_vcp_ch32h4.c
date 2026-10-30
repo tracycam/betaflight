@@ -87,16 +87,33 @@ static void *baudRateCbContext;
 
 void CDC_SetBaudRateCb(void (*cb)(void *context, uint32_t baud), void *context)
 {
-    baudRateCbContext = context;
-    baudRateCb = cb;
+    ATOMIC_BLOCK(NVIC_PRIO_USB) {
+        baudRateCbContext = context;
+        baudRateCb = cb;
+    }
 }
 
 void CDC_SetCtrlLineStateCb(void (*cb)(void *context, uint16_t ctrlLineState), void *context)
 {
-    ctrlLineStateCbContext = context;
-    ctrlLineStateCb = cb;
+    ATOMIC_BLOCK(NVIC_PRIO_USB) {
+        ctrlLineStateCbContext = context;
+        ctrlLineStateCb = cb;
+    }
 }
 
+void usbVcpBaudRateChanged(uint32_t baud)
+{
+    if (baudRateCb) {
+        baudRateCb(baudRateCbContext, baud);
+    }
+}
+
+void usbVcpControlLineStateChanged(uint16_t state)
+{
+    if (ctrlLineStateCb) {
+        ctrlLineStateCb(ctrlLineStateCbContext, state);
+    }
+}
 
 
 uint32_t CDC_Send_FreeBytes(void)

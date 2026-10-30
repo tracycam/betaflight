@@ -492,6 +492,48 @@ int main(void){usart_t reg={0}; uartHardware_t h={1,0,&reg};uartDevice_t d={.har
 ''')
 
 usb='src/platform/CH32/serial_usb_vcp_ch32h4.c'
+run('usb_cdc_callbacks', '''
+#define NVIC_PRIO_USB 0
+#define ATOMIC_BLOCK(x) for (int once=1; once; once=0)
+#define USB_LOG_DBG(...) ((void)0)
+#define USB_LOG_WRN(...) ((void)0)
+#define LO_BYTE(x) ((x)&0xff)
+#define CDC_REQUEST_SET_LINE_CODING 1
+#define CDC_REQUEST_SET_CONTROL_LINE_STATE 2
+#define CDC_REQUEST_GET_LINE_CODING 3
+#define CDC_REQUEST_SEND_BREAK 4
+struct usb_setup_packet { uint8_t bRequest; uint16_t wValue, wIndex, wLength; };
+struct cdc_line_coding { uint32_t dwDTERate; uint8_t bCharFormat, bParityType, bDataBits; } __attribute__((packed));
+static struct cdc_line_coding cdc_vcp_line_coding;
+static void (*baudRateCb)(void *, uint32_t);
+static void *baudRateCbContext;
+static void (*ctrlLineStateCb)(void *, uint16_t);
+static void *ctrlLineStateCbContext;
+static void usbd_cdc_acm_set_dtr(uint8_t bus, uint8_t intf, bool value) { (void)bus; (void)intf; (void)value; }
+static void usbd_cdc_acm_set_rts(uint8_t bus, uint8_t intf, bool value) { (void)bus; (void)intf; (void)value; }
+static void usbd_cdc_acm_send_break(uint8_t bus, uint8_t intf) { (void)bus; (void)intf; }
+''' + fn(usb,'void CDC_SetBaudRateCb(') + fn(usb,'void CDC_SetCtrlLineStateCb(')
+    + fn(usb,'void usbVcpBaudRateChanged(') + fn(usb,'void usbVcpControlLineStateChanged(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c','void usbd_cdc_acm_set_line_coding(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c','void usbd_cdc_acm_get_line_coding(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c','void usbd_cdc_acm_set_control_line_state(')
+    + fn('lib/main/CH32H41x/middlewares/class/cdc/usbd_cdc_acm.c','static int cdc_acm_class_interface_request_handler(') + '''
+static unsigned baudCalls, stateCalls, seenBaud, seenState;
+static void onBaud(void *ctx, uint32_t baud) { if (ctx) { baudCalls++; seenBaud=baud; } }
+static void onState(void *ctx, uint16_t state) { if (ctx) { stateCalls++; seenState=state; } }
+int main(void) {
+    int token=1;
+    CDC_SetBaudRateCb(onBaud, &token); CDC_SetCtrlLineStateCb(onState, &token);
+    struct cdc_line_coding coding={230400,0,0,8}; uint8_t *data=(uint8_t *)&coding; uint32_t len=7;
+    struct usb_setup_packet setup={.bRequest=CDC_REQUEST_SET_LINE_CODING,.wLength=7};
+    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) || baudCalls!=1 || seenBaud!=230400 || cdc_vcp_line_coding.dwDTERate!=230400) return 1;
+    setup.bRequest=CDC_REQUEST_SET_CONTROL_LINE_STATE; setup.wValue=3;
+    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) || stateCalls!=1 || seenState!=3) return 2;
+    CDC_SetCtrlLineStateCb(NULL,NULL); setup.wValue=0;
+    if (cdc_acm_class_interface_request_handler(0,&setup,&data,&len) || stateCalls!=1) return 3;
+    puts("CDC control requests deliver baud and combined line state once");
+}
+''')
 for mps in (64, 512):
  run('usb_zlp_mps_'+str(mps), '''
 #define APP_TX_DATA_SIZE 2048

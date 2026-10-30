@@ -59,6 +59,7 @@ static int cdc_acm_class_interface_request_handler(uint8_t busid, struct usb_set
                         rts);
             usbd_cdc_acm_set_dtr(busid, intf_num, dtr);
             usbd_cdc_acm_set_rts(busid, intf_num, rts);
+            usbd_cdc_acm_set_control_line_state(busid, intf_num, setup->wValue);
             break;
 
         case CDC_REQUEST_GET_LINE_CODING:
@@ -125,6 +126,13 @@ __WEAK void usbd_cdc_acm_set_rts(uint8_t busid, uint8_t intf, bool rts)
     (void)busid;
     (void)intf;
     (void)rts;
+}
+
+__WEAK void usbd_cdc_acm_set_control_line_state(uint8_t busid, uint8_t intf, uint16_t state)
+{
+    (void)busid;
+    (void)intf;
+    (void)state;
 }
 
 __WEAK void usbd_cdc_acm_send_break(uint8_t busid, uint8_t intf)

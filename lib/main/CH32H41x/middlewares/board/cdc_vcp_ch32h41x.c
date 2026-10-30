@@ -197,6 +197,13 @@ void usbd_cdc_acm_set_line_coding(uint8_t busid, uint8_t intf,
   cdc_vcp_line_coding.bDataBits = line_coding->bDataBits;
   cdc_vcp_line_coding.bParityType = line_coding->bParityType;
   cdc_vcp_line_coding.dwDTERate = line_coding->dwDTERate;
+  usbVcpBaudRateChanged(line_coding->dwDTERate);
+}
+
+void usbd_cdc_acm_set_control_line_state(uint8_t busid, uint8_t intf, uint16_t state) {
+  (void)busid;
+  (void)intf;
+  usbVcpControlLineStateChanged(state);
 }
 
 void usbd_cdc_acm_get_line_coding(uint8_t busid, uint8_t intf,

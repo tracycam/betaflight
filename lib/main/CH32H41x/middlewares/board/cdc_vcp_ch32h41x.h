@@ -37,6 +37,8 @@ uint16_t usb_vcp_rx_available(void);
 uint16_t usb_vcp_get_rx_data(uint8_t busid, uint8_t *buffer, uint32_t len);
 uint16_t usb_vcp_send_data(uint8_t busid,uint8_t *buffer,uint16_t len);
 void usbVcpResetState(void);
+void usbVcpBaudRateChanged(uint32_t baud);
+void usbVcpControlLineStateChanged(uint16_t state);
 
 #endif
 
