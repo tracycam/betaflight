@@ -9,7 +9,7 @@ PLATFORM_SDK_ch32_sdk_CC_INSTALL := ch32_sdk_install
 # Toolchain version and URL
 CH32_SDK_VERSION := 12.2.0
 CH32_SDK_URL     := https://github.com/TianpeiLee/riscv-gun-toolchain-12.2.0-x86_64-linux-riscv-wch-elf/archive/refs/tags/12.2.0.tar.gz
-CH32_SDK_FILE    := $(notdir $(CH32_SDK_URL))
+CH32_SDK_FILE    := riscv-wch-elf-gcc-12.2.0-linux-x86_64.tar.gz
 CH32_SDK_SHA256  := 8b9c27b9631c24e91fd51ca496ccd08f66832191d400848112ee4b9e0f8c4c39
 CH32_SDK_DIR     := $(TOOLS_DIR)/riscv-wch-elf-$(CH32_SDK_VERSION)
 CH32_SDK_BIN     := $(CH32_SDK_DIR)/bin
