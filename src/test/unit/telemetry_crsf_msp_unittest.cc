@@ -311,6 +311,33 @@ TEST(CrossFireMSPTest, SendMspReply)
     }
 }
 
+TEST(CrossFireMSPTest, ReplacementReplyStartsWithStartFrame)
+{
+    initSharedMsp();
+    const crsfMspFrame_t *framePtr = (const crsfMspFrame_t*)crsfPidRequest;
+    crsfFrame = *(const crsfFrame_t*)framePtr;
+    crsfFrameDone = true;
+    uint8_t *frameStart = (uint8_t *)&crsfFrame.frame.payload + 2;
+    ASSERT_TRUE(handleMspFrame(frameStart, CRSF_FRAME_RX_MSP_FRAME_SIZE, NULL));
+
+    // Send only the first chunk of the 30-byte reply so headerSent stays true.
+    ASSERT_TRUE(sendMspReply(16, &testSendMspResponse));
+    EXPECT_NE(0, sbufReadU8(&payloadOutputBuf) & 0x10); // START bit set on chunk 0
+
+    // A new request replaces the in-flight response before it finishes; its first reply chunk must also carry START.
+    ASSERT_TRUE(handleMspFrame(frameStart, CRSF_FRAME_RX_MSP_FRAME_SIZE, NULL));
+    ASSERT_TRUE(sendMspReply(16, &testSendMspResponse));
+    EXPECT_NE(0, sbufReadU8(&payloadOutputBuf) & 0x10); // START bit set on replacement reply
+
+    // Likewise when an error response interrupts an unfinished multi-chunk reply.
+    const crsfMspFrame_t *tooBigPtr = (const crsfMspFrame_t*)crsfMspV2TooBig;
+    crsfFrame = *(const crsfFrame_t*)tooBigPtr;
+    crsfFrameDone = true;
+    ASSERT_TRUE(handleMspFrame((uint8_t *)&crsfFrame.frame.payload + 2, CRSF_FRAME_RX_MSP_FRAME_SIZE, NULL));
+    EXPECT_FALSE(sendMspReply(16, &testSendMspResponse));
+    EXPECT_NE(0, sbufReadU8(&payloadOutputBuf) & 0x10); // START bit set on error reply
+}
+
 // STUBS
 
 extern "C" {
