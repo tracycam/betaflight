@@ -56,9 +56,6 @@
 // 2 - Count of reception not complete in time
 // 3 - Number of high bits before telemetry start
 
-// Maximum time to wait for telemetry reception to complete
-#define DSHOT_TELEMETRY_TIMEOUT 2000
-
 // For MCUs that use MPU to control DMA coherency, there might be a performance hit
 // on manipulating input buffer content especially if it is read multiple times,
 // as the buffer region is attributed as not cachable.
@@ -285,15 +282,11 @@ FAST_IRQ_HANDLER void bbDMAIrqHandler(dmaChannelDescriptor_t *descriptor)
 
     bbTIM_DMACmd(bbPort->timhw->tim, bbPort->dmaSource, DISABLE);
 
-    if (DMA_GET_FLAG_STATUS(descriptor, DMA_IT_TEIF)) {
-        DMA_CLEAR_FLAG(descriptor, DMA_IT_TEIF | DMA_IT_TCIF);
-        bbPort->telemetryPending = false;
+    if (bbDMAServiceFlags(bbPort, descriptor)) {
         bbStatus = DSHOT_BITBANG_STATUS_DMA_ERROR;
         dbgPinLo(0);
         return;
     }
-
-    DMA_CLEAR_FLAG(descriptor, DMA_IT_TCIF);
 
 #ifdef USE_DSHOT_TELEMETRY
     if (useDshotTelemetry) {
@@ -381,6 +374,8 @@ static void bbFindPacerTimer(void)
     }
 }
 
+static timeDelta_t bbTelemetryTimeoutUs;
+
 static void bbTimebaseSetup(bbPort_t *bbPort, motorProtocolTypes_e dshotProtocolType)
 {
     uint32_t timerclock = timerClock(bbPort->timhw);
@@ -392,6 +387,7 @@ static void bbTimebaseSetup(bbPort_t *bbPort, motorProtocolTypes_e dshotProtocol
     // XXX Explain this formula
     uint32_t inputFreq = outputFreq * 5 * 2 * DSHOT_BITBANG_TELEMETRY_OVER_SAMPLE / 24;
     bbPort->inputARR = timerclock / inputFreq - 1;
+    bbTelemetryTimeoutUs = (timeDelta_t)(DSHOT_BB_PORT_IP_BUF_LENGTH * 1000000 / inputFreq) * 5 / 4;
 }
 
 //
@@ -508,14 +504,16 @@ static bool bbTelemetryWait(void)
 
         telemetryWait |= telemetryPending;
 
-        if (cmpTimeUs(micros(), startTimeUs) > DSHOT_TELEMETRY_TIMEOUT) {
+        if (cmpTimeUs(micros(), startTimeUs) > bbTelemetryTimeoutUs) {
+            for (int i = 0; i < usedMotorPorts; i++) {
+                if (bbPorts[i].telemetryPending) {
+                    bbPorts[i].telemetryAborted = true;
+                }
+            }
+            DEBUG_SET(DEBUG_DSHOT_TELEMETRY_COUNTS, 2, debug[2] + 1);
             break;
         }
     } while (telemetryPending);
-
-    if (telemetryWait) {
-        DEBUG_SET(DEBUG_DSHOT_TELEMETRY_COUNTS, 2, debug[2] + 1);
-    }
 
     return telemetryWait;
 }
@@ -542,6 +540,9 @@ static bool bbDecodeTelemetry(void)
         }
 #endif
         for (int motorIndex = 0; motorIndex < MAX_SUPPORTED_MOTORS && motorIndex < dshotMotorCount; motorIndex++) {
+            if (bbMotors[motorIndex].bbPort->telemetryAborted) {
+                continue;
+            }
             uint32_t rawValue = decode_bb(                         //without bitBang
                 bbMotors[motorIndex].bbPort->portInputBuffer,
                 bbMotors[motorIndex].bbPort->portInputCount,
@@ -572,6 +573,9 @@ static bool bbDecodeTelemetry(void)
         }
 
         dshotTelemetryState.rawValueState = DSHOT_RAW_VALUE_STATE_NOT_PROCESSED;
+        for (int i = 0; i < usedMotorPorts; i++) {
+            bbPorts[i].telemetryAborted = false;
+        }
     }
 #endif
 
@@ -636,18 +640,32 @@ static void bbUpdateComplete(void)
         SCB_CleanDCache_by_Addr(bbPort->portOutputBuffer, MOTOR_DSHOT_BUF_CACHE_ALIGN_BYTES);
 #endif
 
+        bool outputReinitialized = false;
+        if (bbPort->reinitRequired) {
+            if (!bbSwitchToOutput(bbPort)) {
+                continue;
+            }
+            bbPort->inputActive = false;
+            bbPort->reinitRequired = false;
+            outputReinitialized = true;
+        }
 #ifdef USE_DSHOT_TELEMETRY
         if (useDshotTelemetry) {
             if (bbPort->direction == DSHOT_BITBANG_DIRECTION_INPUT) {
                 bbPort->inputActive = false;
-                bbSwitchToOutput(bbPort);
+                if (!bbSwitchToOutput(bbPort)) {
+                    continue;
+                }
             }
         } else
 #endif
         {
-            bbSwitchToOutput(bbPort);
+            if (!outputReinitialized && !bbSwitchToOutput(bbPort)) {
+                continue;
+            }
         }
 
+        bbPort->telemetryPending = false;
         bbDMA_Cmd(bbPort, ENABLE);
     }
 

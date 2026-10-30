@@ -133,6 +133,11 @@ static void bbSaveDMARegs(dmaResource_t *dmaResource, dmaRegCache_t *dmaRegCache
 
 bool bbSwitchToOutput(bbPort_t *bbPort)
 {
+    dmaResource_t *dmaResource = bbPort->dmaResource;
+    bbDMA_Cmd(bbPort, DISABLE);
+    if (!bbDMAWaitStopped(dmaResource)) {
+        return false;
+    }
     dbgPinHi(1);
     // Output idle level before switching to output
     // Use BSRR register for this
@@ -198,7 +203,6 @@ bool bbSwitchToOutput(bbPort_t *bbPort)
 
     // Reinitialize port group DMA for output
 
-    dmaResource_t *dmaResource = bbPort->dmaResource;
 #ifdef USE_DMA_REGISTER_CACHE
     bbLoadDMARegs(dmaResource, &bbPort->dmaRegOutput);
 #else

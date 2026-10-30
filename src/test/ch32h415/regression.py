@@ -100,6 +100,85 @@ int main(void) {
 ''')
 
 bb='src/platform/CH32/dshot_bitbang.c'
+run('dshot_dma_recovery', '''
+#define USE_DSHOT_TELEMETRY
+#define ENABLE 1
+#define DSHOT_BITBANG_DIRECTION_INPUT 1
+#define DSHOT_BITBANG_DIRECTION_OUTPUT 0
+#define DEBUG_DSHOT_TELEMETRY_COUNTS 0
+#define DEBUG_SET(a,b,c) (debug[b] = (c))
+typedef int32_t timeDelta_t;
+typedef uint32_t timeUs_t;
+typedef struct { bool telemetryPending, telemetryAborted, reinitRequired, inputActive; int direction; } bbPort_t;
+typedef struct { int tim, dmaSources; } bbPacer_t;
+static bbPort_t bbPorts[2];
+static bbPacer_t bbPacers[1];
+static int usedMotorPorts=2, usedMotorPacers, dshotMotorCount, debug[4];
+static bool useDshotTelemetry=true, stopSucceeds;
+static int switches, enables;
+static timeUs_t now, lastSendUs;
+static timeDelta_t bbTelemetryTimeoutUs=10;
+static timeUs_t micros(void) { return now++; }
+static timeDelta_t cmpTimeUs(timeUs_t a, timeUs_t b) { return (timeDelta_t)(a-b); }
+static bool dshotCommandQueueEmpty(void) { return true; }
+static bool dshotCommandOutputIsEnabled(int n) { (void)n; return true; }
+static bool bbSwitchToOutput(bbPort_t *p) {
+    switches++;
+    if (!stopSucceeds) return false;
+    p->direction = DSHOT_BITBANG_DIRECTION_OUTPUT;
+    return true;
+}
+static void bbDMA_Cmd(bbPort_t *p, int enabled) { (void)p; enables += enabled; }
+static void bbTIM_DMACmd(int tim, int sources, int enabled) { (void)tim; (void)sources; (void)enabled; }
+''' + fn(bb,'static bool bbTelemetryWait(void)') + fn(bb,'static void bbUpdateComplete(void)') + '''
+int main(void) {
+    bbPorts[0] = (bbPort_t){ .telemetryPending=true, .direction=DSHOT_BITBANG_DIRECTION_INPUT, .reinitRequired=true };
+    if (!bbTelemetryWait() || !bbPorts[0].telemetryAborted || bbPorts[1].telemetryAborted || debug[2] != 1) return 1;
+    bbUpdateComplete();
+    if (!bbPorts[0].reinitRequired || !bbPorts[0].telemetryPending || enables != 1) return 2;
+    stopSucceeds=true;
+    switches=enables=0;
+    bbUpdateComplete();
+    if (bbPorts[0].reinitRequired || bbPorts[0].telemetryPending || switches != 1 || enables != 2) return 3;
+    puts("timeout isolates partial capture; stopped DMA is required before recovery");
+}
+''')
+run('dshot_dma_stop', '''
+#define DISABLE 0
+#define ENABLE 1
+#define DSHOT_BITBANG_DIRECTION_OUTPUT 0
+#define DMA_IT_TC 1
+#define DMA_IT_TE 2
+#define NVIC_PRIO_TIMER 0
+#define ATOMIC_BLOCK(x) for (int once=1; once; once=0)
+#define WRITE_REG(reg, value) ((reg)=(value))
+#define MODIFY_REG(reg, mask, value) ((reg)=((reg)&~(mask))|(value))
+#define dbgPinHi(x) ((void)0)
+#define dbgPinLo(x) ((void)0)
+typedef struct { uint32_t CFGR; } dmaResource_t;
+typedef struct { uint32_t BSHR, CFGLR, CFGHR; } gpio_t;
+typedef struct { uint32_t ATRLR; } TIM_TypeDef;
+typedef struct { TIM_TypeDef *tim; } mockTimer_t;
+typedef struct { dmaResource_t *dmaResource; gpio_t *gpio; mockTimer_t *timhw; uint32_t gpioIdleBSRR, gpioModeMask, gpioModeOutput, outputARR; int outputDmaInit, direction; } bbPort_t;
+static bool stuck;
+static int dmaWrites;
+static void bbDMA_Cmd(bbPort_t *p, int state) { if (!stuck) p->dmaResource->CFGR=state; }
+#define IS_DMA_ENABLED(d) ((d)->CFGR & 1u)
+#define BB_DMA_STOP_SPIN_LIMIT 100
+static void xDMA_Init(dmaResource_t *d, int *init) { (void)d; (void)init; dmaWrites++; }
+static void xDMA_ITConfig(dmaResource_t *d, int flags, int state) { (void)d; (void)flags; (void)state; }
+''' + fn('src/platform/common/stm32/dshot_bitbang_impl.h','static inline bool bbDMAWaitStopped(')
+    + fn('src/platform/CH32/dshot_bitbang_stdperiph.c','bool bbSwitchToOutput(') + '''
+int main(void) {
+    dmaResource_t dma={.CFGR=1}; gpio_t gpio={.BSHR=17}; TIM_TypeDef tim={.ATRLR=42}; mockTimer_t hw={&tim};
+    bbPort_t port={.dmaResource=&dma,.gpio=&gpio,.timhw=&hw,.gpioIdleBSRR=7,.outputARR=99,.direction=1};
+    stuck=true;
+    if (bbSwitchToOutput(&port) || gpio.BSHR != 17 || tim.ATRLR != 42 || dmaWrites || port.direction != 1) return 1;
+    stuck=false;
+    if (!bbSwitchToOutput(&port) || gpio.BSHR != 7 || tim.ATRLR != 99 || dmaWrites != 1 || port.direction != 0) return 2;
+    puts("busy channel leaves GPIO, timer and DMA configuration untouched");
+}
+''')
 pre='''
 #define USE_DMA_SPEC
 #define MAX_SUPPORTED_MOTOR_PORTS 4
