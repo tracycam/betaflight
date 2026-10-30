@@ -785,8 +785,7 @@ int main(void){int scl=0,sda=0,reg=0;i2cHardware_t hw={.reg=&reg};i2cDevice[0]=(
 ''')
 
 pre='''
-#define CH32H4
-#define USE_THEIA_OSD
+#define USE_PLATFORM_TIMER_FILTER
 #define TIMER_CHANNEL_COUNT 3
 typedef int ioTag_t;
 typedef struct {int unused;} TIM_TypeDef;
@@ -802,10 +801,19 @@ static TIM_TypeDef tim2,tim5,tim9,tim10,tim11,tim12;
 #define TIMER_HARDWARE fullTimerHardware
 static const timerHardware_t fullTimerHardware[]={{1,TIM2},{1,TIM5},{1,TIM9}};
 static int ioToken;
-static void *IOGetByTag(ioTag_t tag){(void)tag;return &ioToken;}
+static void *IOGetByTag(ioTag_t tag){return tag == 1 ? &ioToken : NULL;}
 '''
-run('timer_af_index',pre+fn('src/main/drivers/timer_common.c','const timerHardware_t *timerGetByTagAndIndex')+'''
-int main(void){const timerHardware_t *first=timerGetByTagAndIndex(1,1);const timerHardware_t *second=timerGetByTagAndIndex(1,2);return first==NULL||first->tim!=TIM5||second==NULL||second->tim!=TIM9;}
+run('timer_af_index',pre+fn('src/platform/CH32/timer_ch32h41x.c','bool timerPlatformIsAvailable(')+fn('src/main/drivers/timer_common.c','const timerHardware_t *timerGetByTagAndIndex')+'''
+int main(void){
+ const timerHardware_t *first=timerGetByTagAndIndex(1,1), *second=timerGetByTagAndIndex(1,2);
+ if (!first || first->tim!=TIM5 || !second || second->tim!=TIM9) return 1;
+ timerHardware_t hw={1,TIM2}; if (timerPlatformIsAvailable(&hw)) return 2;
+ hw.tim=TIM10; if (timerPlatformIsAvailable(&hw)) return 3;
+ hw.tim=TIM11; if (timerPlatformIsAvailable(&hw)) return 4;
+ hw.tim=TIM12; if (timerPlatformIsAvailable(&hw)) return 5;
+ hw.tim=TIM5; hw.tag=2; if (timerPlatformIsAvailable(&hw)) return 6;
+ puts("Theia timers and unavailable pins remain excluded");
+}
 ''')
 
 pre='''

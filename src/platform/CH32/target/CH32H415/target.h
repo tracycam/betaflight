@@ -70,6 +70,7 @@
 
 #define USE_THEIA_OSD
 #define USE_PLATFORM_DMA_FILTER
+#define USE_PLATFORM_TIMER_FILTER
 /* PA5/6/7/12, PB0/1/7 and PC4 are exclusively owned by TheiaOSD. */
 #define TARGET_IO_PORTA         0xef1f
 #define TARGET_IO_PORTB         0xff7c
