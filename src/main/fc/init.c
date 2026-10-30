@@ -137,10 +137,6 @@
 #include "io/vtx_tramp.h"
 
 #include "msc/emfat_file.h"
-#ifdef USE_PERSISTENT_MSC_RTC
-#include "msc/usbd_storage.h"
-#endif
-
 #include "msp/msp.h"
 #include "msp/msp_serial.h"
 
