@@ -93,9 +93,8 @@
 
 #include "scheduler/scheduler.h"
 
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
-#include "target/CH32H415/boot_sdi.h"
-#define SYSTEM_LOAD_TASK ch32h415BootSdiSystemTask
+#if defined(USE_PLATFORM_SYSTEM_LOAD_TASK)
+#include "platform/system_load_task.h"
 #else
 #define SYSTEM_LOAD_TASK taskSystemLoad
 #endif

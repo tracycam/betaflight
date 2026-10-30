@@ -48,6 +48,10 @@
 #endif
 #undef USE_USB_MSC
 
+#if defined(CH32H415_BOOT_SDI)
+#define USE_PLATFORM_SYSTEM_LOAD_TASK
+#endif
+
 #define USE_UART1
 #define USE_UART2
 #define USE_UART3
