@@ -159,6 +159,11 @@ bool bbSwitchToOutput(bbPort_t *bbPort)
     if (!bbDMAWaitStopped(dmaResource)) {
         return false;
     }
+    dmaChannelDescriptor_t *descriptor = dmaGetDescriptorByIdentifier(dmaGetIdentifier(dmaResource));
+    if (descriptor) {
+        DMA_CLEAR_FLAG(descriptor, DMA_IT_GLOB | BB_DMA_FLAGS);
+        NVIC_ClearPendingIRQ(descriptor->irqN);
+    }
     dbgPinHi(1);
     // Output idle level before switching to output
     // Use BSRR register for this

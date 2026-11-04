@@ -46,6 +46,11 @@
 #include "pwm_output_dshot_shared.h"
 #include "platform/io_impl.h"
 
+static inline bool isTimer32Bit(const TIM_TypeDef *tim)
+{
+    return tim == TIM9 || tim == TIM10 || tim == TIM11 || tim == TIM12;
+}
+
 #ifdef USE_DSHOT_TELEMETRY
 
 void dshotEnableChannels(unsigned motorCount)
@@ -179,7 +184,7 @@ static void pwmDshotSetDirectionInput(
     }
     // TIM_ARRPreloadConfig(timer, DISABLE);
     timer->CTLR1 &= ~(TIM_ARPE);
-    timer->ATRLR = 0xffff;
+    TIM_SetAutoreload(timer, 0xffff);
 
     TIM_ICInit(timer, &motor->icInitStruct);
 
@@ -220,7 +225,7 @@ void pwmCompleteDshotMotorUpdate(void)
         {
             TIM_ARRPreloadConfig(dmaMotorTimers[i].timer, DISABLE);
             #ifdef USE_DSHOT_TELEMETRY
-            ((TIM_TypeDef *)dmaMotorTimers[i].timer)->ATRLR = dmaMotorTimers[i].outputPeriod;
+            TIM_SetAutoreload((TIM_TypeDef *)dmaMotorTimers[i].timer, dmaMotorTimers[i].outputPeriod);
             #endif
             TIM_ARRPreloadConfig(dmaMotorTimers[i].timer, ENABLE);
             TIM_SetCounter(dmaMotorTimers[i].timer, 0);
@@ -445,7 +450,7 @@ bool pwmDshotMotorHardwareConfig(const timerHardware_t *timerHardware, uint8_t m
         DMAINIT.DMA_Memory0BaseAddr = (uint32_t)motor->dmaBuffer;
         DMAINIT.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
         DMAINIT.DMA_MemoryInc = DMA_MemoryInc_Enable;
-        DMAINIT.DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;
+        DMAINIT.DMA_PeripheralDataSize = isTimer32Bit(timer) ? DMA_PeripheralDataSize_Word : DMA_PeripheralDataSize_HalfWord;
         DMAINIT.DMA_MemoryDataSize = DMA_MemoryDataSize_Word;
         DMAINIT.DMA_Mode = DMA_Mode_Normal;
         DMAINIT.DMA_Priority = DMA_Priority_High;

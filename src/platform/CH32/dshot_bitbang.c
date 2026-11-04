@@ -26,6 +26,7 @@
 
 #ifdef USE_DSHOT_BITBANG
 
+#include "build/atomic.h"
 #include "build/debug.h"
 #include "build/debug_pin.h"
 
@@ -272,7 +273,7 @@ static void bbSetupDma(bbPort_t *bbPort)
     }
     bbPort->pacer = bbPacer;
 
-    dmaSetHandler(dmaIdentifier, bbDMAIrqHandler, NVIC_BUILD_PRIORITY(2, 1), (uint32_t)bbPort);
+    dmaSetHandler(dmaIdentifier, bbDMAIrqHandler, NVIC_PRIO_DSHOT_DMA, (uint32_t)bbPort);
 
     bbDMA_ITConfig(bbPort);
 }
@@ -291,6 +292,7 @@ FAST_IRQ_HANDLER void bbDMAIrqHandler(dmaChannelDescriptor_t *descriptor)
     if (bbDMAServiceFlags(bbPort, descriptor)) {
         bbStatus = DSHOT_BITBANG_STATUS_DMA_ERROR;
 #ifdef USE_DSHOT_TELEMETRY
+        bbPort->telemetryAborted = true;
         if (useDshotTelemetry && bbPort->direction == DSHOT_BITBANG_DIRECTION_OUTPUT && bbPacer) {
             bbPacer->pendingOutputSources &= (uint16_t)~bbPort->dmaSource;
             if (bbPacer->pendingOutputSources == 0 && bbPacer->pendingInputSources != 0) {
@@ -606,7 +608,7 @@ static bool bbDecodeTelemetry(void)
         }
 #endif
         for (int motorIndex = 0; motorIndex < MAX_SUPPORTED_MOTORS && motorIndex < dshotMotorCount; motorIndex++) {
-            if (bbMotors[motorIndex].bbPort->telemetryAborted) {
+            if (!bbMotors[motorIndex].configured || !bbMotors[motorIndex].bbPort || bbMotors[motorIndex].bbPort->telemetryAborted) {
                 continue;
             }
             uint32_t rawValue = decode_bb(                         //without bitBang
@@ -700,72 +702,61 @@ static void bbUpdateComplete(void)
         }
     }
 
-    for (int i = 0; i < usedMotorPacers; i++) {
-        bbPacer_t *bbPacer = &bbPacers[i];
-        bbTIM_DMACmd(bbPacer->tim, bbPacer->dmaSources, DISABLE);
-        bbPacer->armedOutputSources = 0;
-        bbPacer->pendingOutputSources = 0;
-        bbPacer->pendingInputSources = 0;
-    }
+    ATOMIC_BLOCK(NVIC_PRIO_DSHOT_DMA) {
+        for (int i = 0; i < usedMotorPacers; i++) {
+            bbPacer_t *bbPacer = &bbPacers[i];
+            bbTIM_DMACmd(bbPacer->tim, bbPacer->dmaSources, DISABLE);
+            bbPacer->armedOutputSources = 0;
+            bbPacer->pendingOutputSources = 0;
+            bbPacer->pendingInputSources = 0;
+        }
 
-    for (int i = 0; i < usedMotorPorts; i++) {
-        bbPort_t *bbPort = &bbPorts[i];
+        for (int i = 0; i < usedMotorPorts; i++) {
+            bbPort_t *bbPort = &bbPorts[i];
 #ifdef USE_DSHOT_CACHE_MGMT
-        SCB_CleanDCache_by_Addr(bbPort->portOutputBuffer, MOTOR_DSHOT_BUF_CACHE_ALIGN_BYTES);
+            SCB_CleanDCache_by_Addr(bbPort->portOutputBuffer, MOTOR_DSHOT_BUF_CACHE_ALIGN_BYTES);
 #endif
 
-        bool outputReinitialized = false;
-        if (bbPort->reinitRequired) {
             if (!bbSwitchToOutput(bbPort)) {
+                bbPort->reinitRequired = true;
+                bbPort->telemetryAborted = true;
                 continue;
             }
             bbPort->inputActive = false;
             bbPort->reinitRequired = false;
-            outputReinitialized = true;
-        }
-#ifdef USE_DSHOT_TELEMETRY
-        if (useDshotTelemetry) {
-            if (bbPort->direction == DSHOT_BITBANG_DIRECTION_INPUT) {
-                bbPort->inputActive = false;
-                if (!bbSwitchToOutput(bbPort)) {
-                    continue;
-                }
+
+            bbPort->telemetryPending = false;
+            if (bbPort->pacer) {
+                bbPort->pacer->armedOutputSources |= bbPort->dmaSource;
+                bbPort->pacer->outputARR = bbPort->outputARR;
+                bbPort->pacer->inputARR = bbPort->inputARR;
             }
-        } else
-#endif
-        {
-            if (!outputReinitialized && !bbSwitchToOutput(bbPort)) {
+            bbDMA_Cmd(bbPort, ENABLE);
+        }
+
+        lastSendUs = micros();
+        for (int i = 0; i < usedMotorPacers; i++) {
+            bbPacer_t *bbPacer = &bbPacers[i];
+            if (bbPacer->armedOutputSources == 0) {
                 continue;
             }
-        }
-
-        bbPort->telemetryPending = false;
-        if (bbPort->pacer) {
-            bbPort->pacer->armedOutputSources |= bbPort->dmaSource;
-            bbPort->pacer->outputARR = bbPort->outputARR;
-            bbPort->pacer->inputARR = bbPort->inputARR;
-        }
-        bbDMA_Cmd(bbPort, ENABLE);
-    }
-
-    lastSendUs = micros();
-    for (int i = 0; i < usedMotorPacers; i++) {
-        bbPacer_t *bbPacer = &bbPacers[i];
-        if (bbPacer->armedOutputSources == 0) {
-            continue;
-        }
 #ifdef USE_DSHOT_TELEMETRY
-        if (useDshotTelemetry) {
-            bbPacer->pendingOutputSources = bbPacer->armedOutputSources;
-        }
+            if (useDshotTelemetry) {
+                bbPacer->pendingOutputSources = bbPacer->armedOutputSources;
+            }
 #endif
-        bbTIM_ReloadPeriod(bbPacer->tim, bbPacer->outputARR);
-        bbTIM_DMACmd(bbPacer->tim, bbPacer->armedOutputSources, ENABLE);
+            bbTIM_ReloadPeriod(bbPacer->tim, bbPacer->outputARR);
+            bbTIM_DMACmd(bbPacer->tim, bbPacer->armedOutputSources, ENABLE);
+        }
     }
 }
 
 static bool bbEnableMotors(void)
 {
+    if (bbStatus != DSHOT_BITBANG_STATUS_OK || usedMotorPorts == 0) {
+        return false;
+    }
+
     for (int i = 0; i < dshotMotorCount; i++) {
         if (bbMotors[i].configured) {
             IOConfigGPIO(bbMotors[i].io, bbMotors[i].iocfg);
@@ -794,7 +785,22 @@ static void bbPostInit(void)
     bbFindPacerTimer();
 
     for (int motorIndex = 0; motorIndex < MAX_SUPPORTED_MOTORS && motorIndex < dshotMotorCount; motorIndex++) {
-        if (!bbMotorConfig(bbMotors[motorIndex].io, motorIndex, motorProtocol, bbMotors[motorIndex].output)) {
+        if (bbStatus != DSHOT_BITBANG_STATUS_OK ||
+            !bbMotorConfig(bbMotors[motorIndex].io, motorIndex, motorProtocol, bbMotors[motorIndex].output)) {
+            for (int i = 0; i < usedMotorPacers; i++) {
+                bbTIM_DMACmd(bbPacers[i].tim, bbPacers[i].dmaSources, DISABLE);
+            }
+            for (int i = 0; i < usedMotorPorts; i++) {
+                bbDMA_Cmd(&bbPorts[i], DISABLE);
+                bbPorts[i].resourceOwner.owner = OWNER_FREE;
+            }
+            for (int i = 0; i < MAX_SUPPORTED_MOTORS; i++) {
+                bbMotors[i].configured = false;
+                bbMotors[i].enabled = false;
+                bbMotors[i].bbPort = NULL;
+            }
+            usedMotorPorts = 0;
+            usedMotorPacers = 0;
             return;
         }
 

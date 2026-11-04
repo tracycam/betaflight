@@ -53,7 +53,13 @@ __attribute__((always_inline)) static inline uint32_t __get_BASEPRI(void)
 
 __attribute__((always_inline)) static inline void __set_BASEPRI_nb(uint32_t basePri)
 {
-    PFIC_ITHRESDR = basePri & 0xF0;
+    const uint32_t masked = basePri & 0xF0;
+    PFIC_ITHRESDR = masked;
+#ifdef __riscv
+    if (masked != 0) {
+        asm volatile ("fence.i" ::: "memory");
+    }
+#endif
 }
 
 __attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb(uint32_t basePri)
@@ -62,6 +68,9 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb(uint32_t 
     const uint32_t current = __get_BASEPRI();
     if (priority != 0 && (current == 0 || priority < current)) {
         PFIC_ITHRESDR = priority;
+#ifdef __riscv
+        asm volatile ("fence.i" ::: "memory");
+#endif
     }
 }
 
@@ -98,7 +107,7 @@ __attribute__((always_inline)) static inline bool ch32GlobalInterruptsEnabled(vo
 __attribute__((always_inline)) static inline uint32_t ch32IrqSave(void)
 {
     uint32_t state;
-    asm volatile ("csrrc %0, 0x800, %1" : "=r" (state) : "r" (0x88u) : "memory");
+    asm volatile ("csrrc %0, 0x800, %1\n\tfence.i" : "=r" (state) : "r" (0x88u) : "memory");
     return state & 0x88u;
 }
 

@@ -29,6 +29,7 @@
 
 #ifdef USE_DMA
 
+#include "build/atomic.h"
 #include "drivers/nvic.h"
 #include "drivers/dma_impl.h"
 #include "platform/dma.h"
@@ -109,10 +110,22 @@ void dmaMuxEnable(dmaIdentifier_e identifier, uint32_t dmaMuxId)
     if (index < 0 || index >= DMA_LAST_HANDLER || dmaMuxId == 0 || dmaMuxId > CH32_DMAMUX_MAX_REQUEST_ID) {
         return;
     }
+#ifdef USE_PLATFORM_DMA_FILTER
+    if (dmaIsReserved(identifier)) {
+        return;
+    }
+#endif
 
     RCC_ClockCmd(RCC_HB(DMA1), ENABLE);
     enableDmaClock(index);
-    DMA_MuxChannelConfig((uint8_t)index, dmaMuxId);
+
+    volatile uint32_t *cfgr = &(&DMAMUX->CFGR0_3)[index / 4];
+    const unsigned shift = (unsigned)(index % 4) * 8U;
+    const uint32_t mask = 0x7FU << shift;
+    const uint32_t value = ((dmaMuxId - 1U) & 0x7FU) << shift;
+    ATOMIC_BLOCK_ALL() {
+        *cfgr = (*cfgr & ~mask) | value;
+    }
 }
 
 void dmaSetHandler(dmaIdentifier_e identifier, dmaCallbackHandlerFuncPtr callback, uint32_t priority,
@@ -122,6 +135,11 @@ void dmaSetHandler(dmaIdentifier_e identifier, dmaCallbackHandlerFuncPtr callbac
     if (index < 0 || index >= DMA_LAST_HANDLER) {
         return;
     }
+#ifdef USE_PLATFORM_DMA_FILTER
+    if (dmaIsReserved(identifier)) {
+        return;
+    }
+#endif
 
     enableDmaClock(index);
     dmaDescriptors[index].irqHandlerCallback = callback;

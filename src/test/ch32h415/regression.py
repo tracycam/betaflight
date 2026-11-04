@@ -308,6 +308,8 @@ run('dshot_dma_recovery', '''
 #define USE_DSHOT_TELEMETRY
 #define DISABLE 0
 #define ENABLE 1
+#define NVIC_PRIO_DSHOT_DMA 0
+#define ATOMIC_BLOCK(x) for (int once=1; once; once=0)
 #define DSHOT_BITBANG_DIRECTION_INPUT 1
 #define DSHOT_BITBANG_DIRECTION_OUTPUT 0
 #define DEBUG_DSHOT_TELEMETRY_COUNTS 0
@@ -319,7 +321,7 @@ typedef struct { bbPacer_t *pacer; uint16_t dmaSource, outputARR, inputARR; bool
 static bbPort_t bbPorts[2];
 static bbPacer_t bbPacers[1];
 static int usedMotorPorts=2, usedMotorPacers, dshotMotorCount, debug[4];
-static bool useDshotTelemetry=true, stopSucceeds;
+static bool useDshotTelemetry=true, stopSucceedsPort0;
 static int switches, enables;
 static timeUs_t now, lastSendUs;
 static timeDelta_t bbTelemetryTimeoutUs=10;
@@ -329,7 +331,7 @@ static bool dshotCommandQueueEmpty(void) { return true; }
 static bool dshotCommandOutputIsEnabled(int n) { (void)n; return true; }
 static bool bbSwitchToOutput(bbPort_t *p) {
     switches++;
-    if (!stopSucceeds) return false;
+    if (p == &bbPorts[0] && !stopSucceedsPort0) return false;
     p->direction = DSHOT_BITBANG_DIRECTION_OUTPUT;
     return true;
 }
@@ -342,10 +344,10 @@ int main(void) {
     if (!bbTelemetryWait() || !bbPorts[0].telemetryAborted || bbPorts[1].telemetryAborted || debug[2] != 1) return 1;
     bbUpdateComplete();
     if (!bbPorts[0].reinitRequired || !bbPorts[0].telemetryPending || enables != 1) return 2;
-    stopSucceeds=true;
+    stopSucceedsPort0=true;
     switches=enables=0;
     bbUpdateComplete();
-    if (bbPorts[0].reinitRequired || bbPorts[0].telemetryPending || switches != 1 || enables != 2) return 3;
+    if (bbPorts[0].reinitRequired || bbPorts[0].telemetryPending || switches != 2 || enables != 2) return 3;
     puts("timeout isolates partial capture; stopped DMA is required before recovery");
 }
 ''')
@@ -355,6 +357,8 @@ run('dshot_dma_stop', '''
 #define DSHOT_BITBANG_DIRECTION_OUTPUT 0
 #define DMA_IT_TC 1
 #define DMA_IT_TE 2
+#define DMA_IT_GLOB 1
+#define BB_DMA_FLAGS 0x0Eu
 #define NVIC_PRIO_TIMER 0
 #define ATOMIC_BLOCK(x) for (int once=1; once; once=0)
 #define WRITE_REG(reg, value) ((reg)=(value))
@@ -362,12 +366,18 @@ run('dshot_dma_stop', '''
 #define dbgPinHi(x) ((void)0)
 #define dbgPinLo(x) ((void)0)
 typedef struct { uint32_t CFGR; } dmaResource_t;
+typedef struct { int32_t irqN; uint32_t clearedFlags; } dmaChannelDescriptor_t;
 typedef struct { uint32_t BSHR, CFGLR, CFGHR; } gpio_t;
 typedef struct { uint32_t ATRLR; } TIM_TypeDef;
 typedef struct { TIM_TypeDef *tim; } mockTimer_t;
 typedef struct { dmaResource_t *dmaResource; gpio_t *gpio; mockTimer_t *timhw; uint32_t gpioIdleBSRR, gpioModeMask, gpioModeOutput, outputARR, gpioCfgLrMask, gpioCfgHrMask, gpioCfgLrOutput, gpioCfgHrOutput; int outputDmaInit, direction; } bbPort_t;
 static bool stuck;
-static int dmaWrites;
+static int dmaWrites, pendingCleared;
+static dmaChannelDescriptor_t mockDesc = { .irqN = 42 };
+static int dmaGetIdentifier(const dmaResource_t *d) { (void)d; return 1; }
+static dmaChannelDescriptor_t *dmaGetDescriptorByIdentifier(int id) { (void)id; return &mockDesc; }
+#define DMA_CLEAR_FLAG(d, f) ((d)->clearedFlags |= (f))
+static void NVIC_ClearPendingIRQ(int32_t irq) { if (irq == 42) pendingCleared++; }
 static void bbDMA_Cmd(bbPort_t *p, int state) { if (!stuck) p->dmaResource->CFGR=state; }
 #define IS_DMA_ENABLED(d) ((d)->CFGR & 1u)
 #define BB_DMA_STOP_SPIN_LIMIT 100
@@ -379,10 +389,10 @@ int main(void) {
     dmaResource_t dma={.CFGR=1}; gpio_t gpio={.BSHR=17}; TIM_TypeDef tim={.ATRLR=42}; mockTimer_t hw={&tim};
     bbPort_t port={.dmaResource=&dma,.gpio=&gpio,.timhw=&hw,.gpioIdleBSRR=7,.outputARR=99,.direction=1};
     stuck=true;
-    if (bbSwitchToOutput(&port) || gpio.BSHR != 17 || tim.ATRLR != 42 || dmaWrites || port.direction != 1) return 1;
+    if (bbSwitchToOutput(&port) || gpio.BSHR != 17 || tim.ATRLR != 42 || dmaWrites || port.direction != 1 || mockDesc.clearedFlags || pendingCleared) return 1;
     stuck=false;
-    if (!bbSwitchToOutput(&port) || gpio.BSHR != 7 || tim.ATRLR != 99 || dmaWrites != 1 || port.direction != 0) return 2;
-    puts("busy channel leaves GPIO, timer and DMA configuration untouched");
+    if (!bbSwitchToOutput(&port) || gpio.BSHR != 7 || tim.ATRLR != 99 || dmaWrites != 1 || port.direction != 0 || mockDesc.clearedFlags != (DMA_IT_GLOB | BB_DMA_FLAGS) || pendingCleared != 1) return 2;
+    puts("busy channel leaves GPIO, timer and DMA configuration untouched and stopped channel clears stale flags");
 }
 ''')
 pre='''
@@ -482,9 +492,12 @@ run('dshot_bb_gpio_precompute', '''
 #define ENABLE 1
 #define DMA_IT_TC 1
 #define DMA_IT_TE 2
+#define DMA_IT_GLOB 1
+#define BB_DMA_FLAGS 0x0Eu
 typedef struct { uint32_t CFGLR, CFGHR, BSHR; } GPIO_TypeDef;
 typedef struct { uint32_t ATRLR, CNT; } TIM_TypeDef;
 typedef struct { int unused; } dmaResource_t;
+typedef struct { int32_t irqN; } dmaChannelDescriptor_t;
 typedef struct { void *tim; } timerHardware_t;
 typedef struct { GPIO_TypeDef *gpio; dmaResource_t *dmaResource; timerHardware_t *timhw;
     uint32_t gpioModeMask,gpioModeInput,gpioModeOutput,gpioIdleBSRR;
@@ -493,6 +506,10 @@ typedef struct { GPIO_TypeDef *gpio; dmaResource_t *dmaResource; timerHardware_t
 } bbPort_t;
 typedef struct { bbPort_t *bbPort; int pinIndex; unsigned iocfg; void *io; } bbMotor_t;
 static bool useDshotTelemetry=true;
+static int dmaGetIdentifier(const dmaResource_t *d) { (void)d; return 1; }
+static dmaChannelDescriptor_t *dmaGetDescriptorByIdentifier(int id) { (void)id; return NULL; }
+#define DMA_CLEAR_FLAG(d, f) ((void)(d), (void)(f))
+static void NVIC_ClearPendingIRQ(int32_t irq) { (void)irq; }
 static void IOWrite(void *io,int value) { (void)io;(void)value; }
 static void bbDMA_Cmd(bbPort_t *p,int state) { (void)p;(void)state; }
 static bool bbDMAWaitStopped(dmaResource_t *p) { (void)p;return true; }
@@ -1361,10 +1378,13 @@ int main(void) {
 
 run('dma_mux_enable_bounds_and_clocks', dma_enum + '''
 typedef int dmaIdentifier_e;
+#define USE_PLATFORM_DMA_FILTER
 #define DMA_NONE 0
 #define DMA_FIRST_HANDLER 1
+#define DMA2_CH6_HANDLER (DMA_FIRST_HANDLER + 13)
 #define DMA_LAST_HANDLER 16
 #define DMA_IDENTIFIER_TO_INDEX(x) ((x) - DMA_FIRST_HANDLER)
+#define ATOMIC_BLOCK_ALL() for (int __once = (atomic_all_entries++, 1); __once; __once = 0)
 #define ENABLE 1
 #define RCC_HB_DMA1 0x01u
 #define RCC_HB_DMA2 0x02u
@@ -1379,11 +1399,13 @@ typedef void (*dmaCallbackHandlerFuncPtr)(void *);
 typedef struct { void *dma; dmaCallbackHandlerFuncPtr irqHandlerCallback; int32_t irqN; uint32_t userParam; } dmaChannelDescriptor_t;
 static dmaChannelDescriptor_t dmaDescriptors[DMA_LAST_HANDLER];
 static uint32_t enabled_clocks;
+static unsigned atomic_all_entries;
 static void RCC_ClockCmd(uint32_t periph, int state) { if (state) enabled_clocks |= periph; }
 static void NVIC_SetPriority(int32_t irq, uint32_t prio) { (void)irq; (void)prio; }
 static void NVIC_EnableIRQ(int32_t irq) { (void)irq; }
+static void dummyCb(void *p) { (void)p; }
 #define CH32_DMAMUX_MAX_REQUEST_ID DMAMUX_DMAREQ_ID_TIM7_UP
-''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_dma.c', 'void DMA_MuxChannelConfig(')
+''' + fn('src/platform/CH32/dma_ch32h41x.c', 'bool dmaIsReserved(')
     + fn('src/platform/CH32/dma_ch32h41x.c', 'static void enableDmaClock(')
     + fn('src/platform/CH32/dma_ch32h41x.c', 'void dmaEnable(')
     + fn('src/platform/CH32/dma_ch32h41x.c', 'void dmaMuxEnable(')
@@ -1392,21 +1414,29 @@ int main(void) {
     for (int i = 0; i < 8; i++) dmaDescriptors[i].dma = DMA1;
     for (int i = 8; i < 16; i++) dmaDescriptors[i].dma = DMA2;
     mux_hw.CFGR0_3 = 0x55555555u;
+    mux_hw.CFGR12_15 = (48u << 8); /* V3F OSD reserved mux 13 = TIM10 */
     dmaMuxEnable(DMA_NONE, DMAMUX_DMAREQ_ID_TIM1_CH1);
     dmaMuxEnable(DMA_LAST_HANDLER + 1, DMAMUX_DMAREQ_ID_TIM1_CH1);
     dmaMuxEnable(1, 0);
     dmaMuxEnable(1, 0x7Cu);
+    dmaMuxEnable(DMA2_CH6_HANDLER, DMAMUX_DMAREQ_ID_TIM1_CH1);
     dmaEnable(DMA_NONE);
     dmaEnable(DMA_LAST_HANDLER + 1);
-    dmaSetHandler(DMA_NONE, NULL, 0, 0);
-    dmaSetHandler(DMA_LAST_HANDLER + 1, NULL, 0, 0);
-    if (enabled_clocks != 0 || mux_hw.CFGR0_3 != 0x55555555u) return 1;
+    dmaSetHandler(DMA_NONE, dummyCb, 0, 0);
+    dmaSetHandler(DMA_LAST_HANDLER + 1, dummyCb, 0, 0);
+    dmaSetHandler(DMA2_CH6_HANDLER, dummyCb, 0, 0x99u);
+    if (enabled_clocks != 0 || mux_hw.CFGR0_3 != 0x55555555u || mux_hw.CFGR12_15 != (48u << 8)) return 1;
+    if (dmaDescriptors[13].irqHandlerCallback != NULL || atomic_all_entries != 0) return 2;
     dmaMuxEnable(9, DMAMUX_DMAREQ_ID_TIM9_CH1);
-    if (enabled_clocks != (RCC_HB_DMA1 | RCC_HB_DMA2)) return 2;
-    if ((mux_hw.CFGR8_11 & 0xFFu) != (DMAMUX_DMAREQ_ID_TIM9_CH1 - 1u)) return 3;
+    if (enabled_clocks != (RCC_HB_DMA1 | RCC_HB_DMA2)) return 3;
+    if ((mux_hw.CFGR8_11 & 0xFFu) != (DMAMUX_DMAREQ_ID_TIM9_CH1 - 1u)) return 4;
+    dmaMuxEnable(13, DMAMUX_DMAREQ_ID_TIM8_CH1);
     dmaMuxEnable(16, DMAMUX_DMAREQ_ID_TIM7_UP);
-    if (((mux_hw.CFGR12_15 >> 24) & 0xFFu) != (DMAMUX_DMAREQ_ID_TIM7_UP - 1u)) return 4;
-    puts("dmaMuxEnable guards bounds/zero-underflow and enables DMAMUX + controller HB clocks");
+    if (((mux_hw.CFGR12_15 >> 0) & 0xFFu) != (DMAMUX_DMAREQ_ID_TIM8_CH1 - 1u)) return 5;
+    if (((mux_hw.CFGR12_15 >> 8) & 0xFFu) != 48u) return 6;
+    if (((mux_hw.CFGR12_15 >> 24) & 0xFFu) != (DMAMUX_DMAREQ_ID_TIM7_UP - 1u)) return 7;
+    if (atomic_all_entries != 3) return 8;
+    puts("dmaMuxEnable guards bounds/zero-underflow/OSD-reserved DMA2_CH6 and updates CFGR atomically");
 }
 ''')
 
@@ -1514,98 +1544,187 @@ run('dshot_bb_shared_pacer_bidir_sync', '''
 #define BB_DMA_FLAGS (DMA_IT_TCIF | DMA_IT_HTIF | DMA_IT_TEIF)
 #define TIM_PSCReloadMode_Immediate 0x01u
 #define TIM_FLAG_Update 0x01u
+#define NVIC_PRIO_DSHOT_DMA 0xA0u
+#define ATOMIC_BLOCK(x) for (int __once = (atomic_dshot_entries++, 1); __once; __once = 0)
+#define MAX_SUPPORTED_MOTORS 4
+#define DSHOT_TELEMETRY_NOEDGE 0xFFFEu
+#define DSHOT_TELEMETRY_INVALID 0xFFFFu
+#define DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE 13
+#define DSHOT_TELEMETRY_TYPE_STATE_EVENTS 1
+#define DSHOT_RAW_VALUE_STATE_NOT_PROCESSED 1
+#define DEBUG_SET(a, b, c) ((void)0)
 #define FAST_IRQ_HANDLER
 #define FAST_CODE
 #define dbgPinHi(x) ((void)0)
 #define dbgPinLo(x) ((void)0)
 typedef uint32_t timeUs_t;
-typedef struct { uint32_t ATRLR, CNT, SWEVGR, INTFR, DMAINTENR; unsigned ugCount; uint32_t shadowATRLR; } TIM_TypeDef;
+typedef struct { uint32_t ATRLR, CNT, SWEVGR, INTFR, DMAINTENR; } TIM_TypeDef;
 typedef struct { TIM_TypeDef *tim; } timerHardware_t;
-typedef struct { uint32_t CFGR; } dmaResource_t;
+typedef struct { uint32_t CFGR, CNTR; } dmaResource_t;
 typedef struct { TIM_TypeDef *tim; uint16_t dmaSources, armedOutputSources; volatile uint16_t pendingOutputSources, pendingInputSources; uint16_t outputARR, inputARR; } bbPacer_t;
 typedef struct {
     bbPacer_t *pacer;
     timerHardware_t *timhw;
     dmaResource_t *dmaResource;
+    uint16_t *portInputBuffer;
+    uint16_t portInputCount;
     uint16_t dmaSource, outputARR, inputARR;
     uint8_t direction;
     volatile bool telemetryPending, reinitRequired;
     bool inputActive, telemetryAborted;
     uint32_t outputIrq, inputIrq, errorIrq;
 } bbPort_t;
+typedef struct { bbPort_t *bbPort; int pinIndex; int io, iocfg, output; bool configured, enabled; } bbMotor_t;
 typedef struct { uintptr_t userParam; uint32_t flags; } dmaChannelDescriptor_t;
 #define DMA_GET_FLAG_STATUS(d, f) ((d)->flags & (f))
 #define DMA_CLEAR_FLAG(d, f) ((d)->flags &= ~(f))
 static bbPacer_t bbPacers[1];
 static bbPort_t bbPorts[2];
-static int usedMotorPacers = 1, usedMotorPorts = 2, dshotMotorCount = 4, bbStatus;
+static bbMotor_t bbMotors[MAX_SUPPORTED_MOTORS];
+static struct { uint32_t readCount, invalidPacketCount, rawValueState; struct { uint32_t rawValue, telemetryTypes; } motorState[MAX_SUPPORTED_MOTORS]; } dshotTelemetryState;
+static int usedMotorPacers = 1, usedMotorPorts = 2, dshotMotorCount = 4, bbStatus, motorProtocol;
 static bool useDshotTelemetry = true;
+static unsigned atomic_dshot_entries, decodeCalls, switchOutCalls;
+static bool failSwitchOutPort1;
 static timeUs_t lastSendUs;
 static timeUs_t micros(void) { return 100; }
+static uint8_t dshotCommandGetCurrent(int idx) { (void)idx; return 0; }
 static bool dshotCommandQueueEmpty(void) { return true; }
 static bool dshotCommandOutputIsEnabled(int n) { (void)n; return true; }
 static void bbDMA_Cmd(bbPort_t *p, int state) { p->dmaResource->CFGR = (uint32_t)state; }
-static void bbTIM_ReloadPeriod(void *TIMx, uint16_t period) {
-    TIM_TypeDef *tim = (TIM_TypeDef *)TIMx;
-    tim->ATRLR = period;
-    tim->SWEVGR = TIM_PSCReloadMode_Immediate;
-    tim->shadowATRLR = tim->ATRLR;
-    tim->CNT = 0;
-    tim->ugCount++;
-    tim->INTFR = (uint16_t)~TIM_FLAG_Update;
-}
+''' + fn('src/platform/CH32/dshot_bitbang_stdperiph.c', 'void bbTIM_ReloadPeriod(').replace(
+    'tim->SWEVGR = TIM_PSCReloadMode_Immediate;',
+    'tim->SWEVGR = TIM_PSCReloadMode_Immediate; tim->CNT = 0;'
+) + '''
 static void bbTIM_DMACmd(void *TIMx, uint16_t src, int state) {
     TIM_TypeDef *tim = (TIM_TypeDef *)TIMx;
     if (state) tim->DMAINTENR |= src;
     else tim->DMAINTENR &= (uint16_t)~src;
 }
 static bool bbSwitchToOutput(bbPort_t *p) {
+    switchOutCalls++;
+    if (failSwitchOutPort1 && p == &bbPorts[1]) return false;
     p->timhw->tim->ATRLR = p->outputARR;
+    p->dmaResource->CNTR = 51;
     p->direction = DSHOT_BITBANG_DIRECTION_OUTPUT;
     return true;
 }
 static void bbSwitchToInput(bbPort_t *p) {
+    p->dmaResource->CNTR = 140;
     bbDMA_Cmd(p, ENABLE);
     p->direction = DSHOT_BITBANG_DIRECTION_INPUT;
 }
+static uint32_t decode_bb(uint16_t *buf, uint16_t cnt, int pin) {
+    (void)buf; (void)cnt; (void)pin;
+    decodeCalls++;
+    return 0x0123u;
+}
 ''' + fn('src/platform/common/stm32/dshot_bitbang_impl.h', 'static inline bool bbDMAServiceFlags(')
     + fn('src/platform/CH32/dshot_bitbang.c', 'FAST_IRQ_HANDLER void bbDMAIrqHandler(')
+    + fn('src/platform/CH32/dshot_bitbang.c', 'static bool bbDecodeTelemetry(void)')
     + fn('src/platform/CH32/dshot_bitbang.c', 'static void bbUpdateComplete(void)') + '''
 int main(void) {
-    TIM_TypeDef tim1 = { .ATRLR = 154, .shadowATRLR = 154, .CNT = 77 };
+    uint16_t inBuf0[4] = {0}, inBuf1[4] = {0};
+    TIM_TypeDef tim1 = { .ATRLR = 154, .CNT = 77 };
     timerHardware_t hw0 = { &tim1 }, hw1 = { &tim1 };
     dmaResource_t dma0 = {0}, dma1 = {0};
     bbPacers[0] = (bbPacer_t){ .tim = &tim1, .dmaSources = 0x06u };
-    bbPorts[0] = (bbPort_t){ .pacer = &bbPacers[0], .timhw = &hw0, .dmaResource = &dma0, .dmaSource = 0x02u, .outputARR = 193, .inputARR = 154, .direction = DSHOT_BITBANG_DIRECTION_INPUT };
-    bbPorts[1] = (bbPort_t){ .pacer = &bbPacers[0], .timhw = &hw1, .dmaResource = &dma1, .dmaSource = 0x04u, .outputARR = 193, .inputARR = 154, .direction = DSHOT_BITBANG_DIRECTION_INPUT };
+    bbPorts[0] = (bbPort_t){ .pacer = &bbPacers[0], .timhw = &hw0, .dmaResource = &dma0, .portInputBuffer = inBuf0, .portInputCount = 4, .dmaSource = 0x02u, .outputARR = 193, .inputARR = 154, .direction = DSHOT_BITBANG_DIRECTION_INPUT };
+    /* Port 1 starts in OUTPUT with CNTR == 0 ([B2]): bbUpdateComplete MUST still call bbSwitchToOutput and reload CNTR = 51! */
+    bbPorts[1] = (bbPort_t){ .pacer = &bbPacers[0], .timhw = &hw1, .dmaResource = &dma1, .portInputBuffer = inBuf1, .portInputCount = 4, .dmaSource = 0x04u, .outputARR = 193, .inputARR = 154, .direction = DSHOT_BITBANG_DIRECTION_OUTPUT };
+    bbMotors[0] = (bbMotor_t){ .bbPort = &bbPorts[0], .pinIndex = 0, .configured = true };
+    bbMotors[1] = (bbMotor_t){ .bbPort = &bbPorts[1], .pinIndex = 1, .configured = true };
+    bbMotors[2] = (bbMotor_t){ .configured = false, .bbPort = NULL }; /* unconfigured motor must be skipped safely */
 
-    /* 1. Normal frame: output reload happens once with shadowATRLR == 193 and both CC1|CC2 armed */
+    /* 1. Normal frame: output reload happens via real bbTIM_ReloadPeriod, CNTR reloaded to 51 on both ports, ATOMIC_BLOCK entered */
     bbUpdateComplete();
-    if (tim1.shadowATRLR != 193 || tim1.ugCount != 1 || tim1.DMAINTENR != 0x06u) return 1;
+    if (tim1.ATRLR != 193 || tim1.CNT != 0 || tim1.DMAINTENR != 0x06u || dma0.CNTR != 51 || dma1.CNTR != 51 || atomic_dshot_entries != 1) return 1;
     tim1.CNT = 120;
 
     /* Port 0 finishes output first: must NOT reset CNT or reload inputARR while Port 1 is still outputting */
     dmaChannelDescriptor_t desc0 = { .userParam = (uintptr_t)&bbPorts[0], .flags = DMA_IT_TCIF };
     bbDMAIrqHandler(&desc0);
-    if (tim1.CNT != 120 || tim1.shadowATRLR != 193 || tim1.ugCount != 1 || tim1.DMAINTENR != 0x04u) return 2;
+    if (tim1.CNT != 120 || tim1.ATRLR != 193 || tim1.DMAINTENR != 0x04u) return 2;
     if (!bbPorts[0].telemetryPending || bbPorts[0].direction != DSHOT_BITBANG_DIRECTION_INPUT || dma0.CFGR != 1) return 3;
 
-    /* Port 1 finishes output: single synchronized UG switches shadowATRLR -> 154, CNT -> 0, and enables CC1|CC2 input */
+    /* Port 1 finishes output: single synchronized UG switches ATRLR -> 154, CNT -> 0, and enables CC1|CC2 input */
     dmaChannelDescriptor_t desc1 = { .userParam = (uintptr_t)&bbPorts[1], .flags = DMA_IT_TCIF };
     bbDMAIrqHandler(&desc1);
-    if (tim1.CNT != 0 || tim1.shadowATRLR != 154 || tim1.ugCount != 2 || tim1.DMAINTENR != 0x06u) return 4;
+    if (tim1.CNT != 0 || tim1.ATRLR != 154 || tim1.DMAINTENR != 0x06u) return 4;
 
-    /* Both ports complete input reception cleanly */
+    /* Both ports complete input reception cleanly -> 2 configured motors decoded */
     desc0.flags = DMA_IT_TCIF; bbDMAIrqHandler(&desc0);
     desc1.flags = DMA_IT_TCIF; bbDMAIrqHandler(&desc1);
     if (bbPorts[0].telemetryPending || bbPorts[1].telemetryPending || tim1.DMAINTENR != 0) return 5;
+    bbDecodeTelemetry();
+    if (decodeCalls != 2 || dshotTelemetryState.readCount != 2) return 6;
 
-    /* 2. Fault isolation: if Port 1 hits TEIF during output after Port 0 armed input, Port 0 still receives input clocks */
+    /* 2. Fault isolation ([B3]): if Port 1 hits TEIF during output, Port 0 still receives input clocks AND Port 1 sets telemetryAborted so stale GCR is NOT re-decoded */
+    decodeCalls = 0;
     bbUpdateComplete();
     desc0.flags = DMA_IT_TCIF; bbDMAIrqHandler(&desc0);
     desc1.flags = DMA_IT_TEIF; bbDMAIrqHandler(&desc1);
-    if (!bbPorts[1].reinitRequired || tim1.shadowATRLR != 154 || tim1.DMAINTENR != 0x02u) return 6;
-    puts("shared pacer synchronizes ARPE shadow reload once across multi-port output->input transitions and isolates TEIF");
+    if (!bbPorts[1].reinitRequired || !bbPorts[1].telemetryAborted || tim1.ATRLR != 154 || tim1.DMAINTENR != 0x02u) return 7;
+    desc0.flags = DMA_IT_TCIF; bbDMAIrqHandler(&desc0);
+    bbDecodeTelemetry();
+    if (decodeCalls != 1) return 8; /* Only Port 0 decoded; faulted Port 1 skipped! */
+
+    /* 3. Switch-to-output failure on Port 1 sets telemetryAborted too ([B3]) */
+    decodeCalls = 0;
+    failSwitchOutPort1 = true;
+    bbUpdateComplete();
+    if (!bbPorts[1].telemetryAborted || bbPacers[0].armedOutputSources != 0x02u) return 9;
+    bbDecodeTelemetry();
+    if (decodeCalls != 1) return 10;
+    puts("shared pacer synchronizes ARPE shadow reload, reloads CNTR in OUTPUT state, and blocks stale GCR decode on TEIF/abort");
+}
+''')
+
+run('dshot_bb_postinit_fail_safe', '''
+#define MAX_SUPPORTED_MOTORS 4
+#define DSHOT_BITBANG_STATUS_OK 0
+#define DSHOT_BITBANG_STATUS_NO_PACER 2
+#define OWNER_FREE 0
+#define OWNER_DSHOT_BITBANG 9
+#define DISABLE 0
+typedef int IO_t;
+typedef struct { void *tim; uint16_t dmaSources; } bbPacer_t;
+typedef struct { struct { int owner; } resourceOwner; int dmaStopped; } bbPort_t;
+typedef struct { IO_t io; int output, iocfg; bbPort_t *bbPort; bool configured, enabled; } bbMotor_t;
+static bbPacer_t bbPacers[2];
+static bbPort_t bbPorts[2];
+static bbMotor_t bbMotors[MAX_SUPPORTED_MOTORS];
+static int usedMotorPacers, usedMotorPorts, dshotMotorCount = 4, bbStatus, motorProtocol, gpioConfigs;
+static void bbTIM_DMACmd(void *tim, uint16_t src, int state) { (void)tim; (void)src; if (!state) bbPacers[0].dmaSources = 0; }
+static void bbDMA_Cmd(bbPort_t *p, int state) { if (!state) p->dmaStopped = 1; }
+static void IOConfigGPIO(IO_t io, int cfg) { (void)io; (void)cfg; gpioConfigs++; }
+static void bbFindPacerTimer(void) {
+    bbStatus = DSHOT_BITBANG_STATUS_OK;
+    usedMotorPacers = 1;
+    bbPacers[0].dmaSources = 0x02u;
+}
+static bool bbMotorConfig(IO_t io, uint8_t idx, int proto, uint8_t out) {
+    (void)io; (void)proto; (void)out;
+    if (idx == 0) {
+        usedMotorPorts = 1;
+        bbPorts[0].resourceOwner.owner = OWNER_DSHOT_BITBANG;
+        bbMotors[0].bbPort = &bbPorts[0];
+        bbMotors[0].configured = true;
+        return true;
+    }
+    bbStatus = DSHOT_BITBANG_STATUS_NO_PACER;
+    return false;
+}
+''' + fn('src/platform/CH32/dshot_bitbang.c', 'static bool bbEnableMotors(void)')
+    + fn('src/platform/CH32/dshot_bitbang.c', 'static void bbPostInit(void)') + '''
+int main(void) {
+    bbPostInit();
+    if (bbStatus != DSHOT_BITBANG_STATUS_NO_PACER) return 1;
+    if (usedMotorPorts != 0 || usedMotorPacers != 0) return 2;
+    if (!bbPorts[0].dmaStopped || bbPorts[0].resourceOwner.owner != OWNER_FREE || bbPacers[0].dmaSources != 0) return 3;
+    if (bbMotors[0].configured || bbMotors[0].enabled || bbMotors[0].bbPort != NULL) return 4;
+    if (bbEnableMotors() || gpioConfigs != 0) return 5;
+    puts("bbPostInit tears down partial ports on pacer exhaustion and bbEnableMotors refuses partial/failed enable");
 }
 ''')
 
