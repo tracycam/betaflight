@@ -154,19 +154,11 @@ void usbd_cdc_acm_bulk_out(uint8_t busid, uint8_t ep, uint32_t nbytes) {
 
 // ep send call
 void usbd_cdc_acm_bulk_in(uint8_t busid, uint8_t ep, uint32_t nbytes) {
-  // USB_LOG_RAW("actual in len:%d\r\n", (unsigned int)nbytes);
-
-  // zero length control by app
-  //  if ((nbytes % usbd_get_ep_mps(busid, ep)) == 0 && nbytes) {
-  //      /* send zlp */
-  //      usbd_ep_start_write(busid, CDC_IN_EP, NULL, 0);
-  //  } else
   UNUSED(busid);
   UNUSED(ep);
   UNUSED(nbytes);
-  {
-    ep_tx_busy_flag = 0; // send finish
-  }
+  ep_tx_busy_flag = 0; // send finish
+  usbVcpTxDoneISR();
 }
 
 /*!< endpoint call back */
@@ -258,10 +250,18 @@ uint16_t usb_vcp_get_rx_data(uint8_t busid, uint8_t *buffer, uint32_t len) {
 }
 
 uint16_t usb_vcp_send_data(uint8_t busid, uint8_t *buffer, uint16_t len) {
+  if (len > TX_BUFFER_SIZE) {
+    return 1;
+  }
   if (ep_tx_busy_flag == 0) {
     ep_tx_busy_flag = 1;
-    memcpy(write_buffer, buffer, len);
-    usbd_ep_start_write(busid, CDC_IN_EP, write_buffer, len);
+    if (len > 0) {
+      memcpy(write_buffer, buffer, len);
+    }
+    if (usbd_ep_start_write(busid, CDC_IN_EP, write_buffer, len) < 0) {
+      ep_tx_busy_flag = 0;
+      return 1;
+    }
   } else {
     return 1;
   }

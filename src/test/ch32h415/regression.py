@@ -699,20 +699,23 @@ int main(void) {
 ''')
 for mps in (64, 512):
  run('usb_zlp_mps_'+str(mps), '''
-#define APP_TX_DATA_SIZE 2048
+#define NVIC_PRIO_USB 0
+#define ATOMIC_BLOCK(x) for (int once=1; once; once=0)
+#define APP_TX_DATA_SIZE 8192
 #define APP_TX_BLOCK_SIZE 512
 #define CDC_MAX_MPS TEST_MPS
 static uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
 static uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
 static uint8_t ep_tx_busy_flag;
 static unsigned sendCount, lastLength;
+static uint8_t usbIsConfigured(void) { return 1; }
 static int usb_vcp_send_data(int bus, uint8_t *buffer, unsigned length) {
     (void)bus; (void)buffer;
     sendCount++; lastLength=length; ep_tx_busy_flag=1;
     return 0;
 }
-''' + fn(usb,'void usb_int_rxsof_handler(void)') + '''
-static void tick(void) { for (int i=0; i<17; i++) usb_int_rxsof_handler(); }
+''' + fn(usb,'static void usbVcpKickTx(void)') + fn(usb,'void usb_int_rxsof_handler(void)') + '''
+static void tick(void) { usb_int_rxsof_handler(); }
 int main(void) {
     UserTxBufPtrIn=64;
     tick();
@@ -728,7 +731,7 @@ int main(void) {
     unsigned before=sendCount;
     tick();
     if (sendCount != before+1 || lastLength != 0) return 4;
-    puts("ZLP follows the configured bulk endpoint packet size");
+    puts("ZLP follows the configured bulk endpoint packet size without 17ms SOF throttle");
 }
 ''',extra_flags=('-DTEST_MPS='+str(mps),))
 pre='''
@@ -737,9 +740,11 @@ pre='''
 #define NVIC_BUILD_PRIORITY(a,b) 0
 #define NVIC_PRIO_USB 0
 #define ATOMIC_BLOCK(x) for(int once=1;once;once=0)
-#define APP_TX_DATA_SIZE 2048
-static volatile uint32_t now_ms,UserTxBufPtrIn,UserTxBufPtrOut;
-static volatile uint8_t UserTxBuffer[2048];
+#define APP_TX_DATA_SIZE 8192
+#define APP_TX_BLOCK_SIZE 512
+#define CDC_MAX_MPS 64
+static volatile uint32_t now_ms,UserTxBufPtrIn,UserTxBufPtrOut,lastBuffsize;
+static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE],ep_tx_busy_flag;
 typedef uint32_t timeUs_t;
 typedef int serialPort_t;
 static timeUs_t micros(void){return now_ms*1000;}
@@ -748,9 +753,10 @@ static void delay(int ms){now_ms+=ms;}
 static bool usbVcpIsConnected(void){return true;}
 static bool usbIsConnected(void){return true;}
 static bool usbIsConfigured(void){return true;}
+static uint16_t usb_vcp_send_data(uint8_t bus, uint8_t *buf, uint16_t len){(void)bus;(void)buf;(void)len;if(ep_tx_busy_flag)return 1;ep_tx_busy_flag=1;return 0;}
 '''
-run('usb_host_stops_reading',pre+fn(usb,'uint32_t CDC_Send_FreeBytes(void)')+fn(usb,'uint32_t CDC_Send_DATA(')+fn(usb,'static void usbVcpWriteBuf(')+'''
-int main(void){uint8_t data[2048]={0};usbVcpWriteBuf(NULL,data,2048);printf("returned after %u ms\\n",now_ms);}
+run('usb_host_stops_reading',pre+fn(usb,'static void usbVcpKickTx(void)')+fn(usb,'uint32_t CDC_Send_FreeBytes(void)')+fn(usb,'uint32_t CDC_Send_DATA(')+fn(usb,'static void usbVcpWriteBuf(')+'''
+int main(void){static uint8_t data[APP_TX_DATA_SIZE]={0};usbVcpWriteBuf(NULL,data,sizeof(data));if(now_ms<50||now_ms>60)return 1;printf("returned after %u ms\\n",now_ms);}
 ''',timeout=0.3)
 
 uc='src/platform/CH32/serial_uart_ch32bsp.c'
@@ -1599,5 +1605,133 @@ int main(void) {
     desc1.flags = DMA_IT_TEIF; bbDMAIrqHandler(&desc1);
     if (!bbPorts[1].reinitRequired || tim1.shadowATRLR != 154 || tim1.DMAINTENR != 0x02u) return 6;
     puts("shared pacer synchronizes ARPE shadow reload once across multi-port output->input transitions and isolates TEIF");
+}
+''')
+
+run('usb_vcp_chained_16k_throughput', '''
+#define UNUSED(x) ((void)(x))
+#define NVIC_PRIO_USB 0
+#define ATOMIC_BLOCK(x) for (int once = 1; once; once = 0)
+#define USB_TIMEOUT 50
+#define APP_TX_DATA_SIZE 8192
+#define APP_TX_BLOCK_SIZE 512
+#define TX_BUFFER_SIZE 512
+#define CDC_IN_EP 0x82
+#define CDC_MAX_MPS 64
+typedef uint32_t timeUs_t;
+typedef int serialPort_t;
+static struct { uint32_t txAt; } vcpPort;
+static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
+static volatile uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
+static volatile uint8_t ep_tx_busy_flag;
+static bool usbHostPortOpen = true;
+static uint8_t write_buffer[TX_BUFFER_SIZE];
+static uint8_t hostRx[16384];
+static uint32_t hostRxLen;
+static bool epPending;
+static uint32_t epPendingLen, zlpCount, chunkCount, nowUs;
+static timeUs_t micros(void) { return nowUs; }
+static uint8_t usbIsConfigured(void) { return 1; }
+static uint8_t usbVcpIsConnected(void) { return 1; }
+void usbVcpTxDoneISR(void);
+void usbd_cdc_acm_bulk_in(uint8_t busid, uint8_t ep, uint32_t nbytes);
+uint16_t usb_vcp_send_data(uint8_t busid, uint8_t *buffer, uint16_t len);
+static int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *data, uint32_t data_len) {
+    (void)busid;
+    if (ep != CDC_IN_EP || epPending) return -1;
+    if (data_len > 0) {
+        if (hostRxLen + data_len > sizeof(hostRx)) return -2;
+        memcpy(&hostRx[hostRxLen], data, data_len);
+        hostRxLen += data_len;
+        chunkCount++;
+    } else {
+        zlpCount++;
+    }
+    epPending = true;
+    epPendingLen = data_len;
+    return 0;
+}
+static void pumpUsbInCompletions(void) {
+    while (epPending) {
+        uint32_t n = epPendingLen;
+        epPending = false;
+        epPendingLen = 0;
+        usbd_cdc_acm_bulk_in(0, CDC_IN_EP, n);
+    }
+}
+static void delay(int ms) {
+    nowUs += (uint32_t)ms * 1000u;
+    pumpUsbInCompletions();
+}
+''' + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
+    + fn(usb, 'static void usbVcpKickTx(void)')
+    + fn(usb, 'void usbVcpTxDoneISR(void)')
+    + fn(usb, 'uint32_t CDC_Send_FreeBytes(void)')
+    + fn(usb, 'uint32_t CDC_Send_DATA(')
+    + fn(usb, 'static bool isUsbVcpTransmitBufferEmpty(') + '''
+int main(void) {
+    uint8_t src[16384];
+    for (uint32_t i = 0; i < sizeof(src); i++) {
+        src[i] = (uint8_t)((i * 131u + 17u) & 0xffu);
+    }
+    /* Stream four 4096B frames back-to-back purely via bulk-IN completion chaining (zero SOF ticks) */
+    for (uint32_t frame = 0; frame < 4; frame++) {
+        if (CDC_Send_DATA(&src[frame * 4096], 4096) != 4096) return 1;
+    }
+    pumpUsbInCompletions();
+    if (hostRxLen != sizeof(src) || memcmp(src, hostRx, sizeof(src)) != 0) return 2;
+    if (chunkCount < 32 || zlpCount == 0 || !isUsbVcpTransmitBufferEmpty(NULL)) return 3;
+    puts("16KB streamed intact across 8KB ring wraparound purely via chained bulk-IN callbacks");
+}
+''')
+
+run('usb_vcp_ep_start_write_fail_recovery', '''
+#define UNUSED(x) ((void)(x))
+#define NVIC_PRIO_USB 0
+#define ATOMIC_BLOCK(x) for (int once = 1; once; once = 0)
+#define APP_TX_DATA_SIZE 8192
+#define APP_TX_BLOCK_SIZE 512
+#define TX_BUFFER_SIZE 512
+#define CDC_IN_EP 0x82
+#define CDC_MAX_MPS 64
+static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
+static volatile uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
+static volatile uint8_t ep_tx_busy_flag;
+static uint8_t write_buffer[TX_BUFFER_SIZE];
+static bool epEnabled;
+static uint8_t delivered[128];
+static uint32_t deliveredLen;
+void usbVcpTxDoneISR(void);
+uint16_t usb_vcp_send_data(uint8_t busid, uint8_t *buffer, uint16_t len);
+static uint8_t usbIsConfigured(void) { return 1; }
+static int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *data, uint32_t data_len) {
+    (void)busid; (void)ep;
+    if (!epEnabled) return -2;
+    memcpy(delivered, data, data_len);
+    deliveredLen = data_len;
+    return 0;
+}
+''' + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
+    + fn(usb, 'static void usbVcpKickTx(void)')
+    + fn(usb, 'void usbVcpTxDoneISR(void)')
+    + fn(usb, 'void usb_int_rxsof_handler(void)') + '''
+int main(void) {
+    for (uint32_t i = 0; i < 37; i++) UserTxBuffer[i] = (uint8_t)(0xa0u + i);
+    UserTxBufPtrIn = 37;
+    /* Endpoint disabled: usbd_ep_start_write returns -2; busy flag MUST roll back to 0 */
+    usb_int_rxsof_handler();
+    if (ep_tx_busy_flag != 0 || lastBuffsize != 0 || UserTxBufPtrOut != 0) return 1;
+    /* Oversized length guard */
+    if (usb_vcp_send_data(0, (uint8_t *)UserTxBuffer, TX_BUFFER_SIZE + 1) != 1 || ep_tx_busy_flag != 0) return 2;
+    /* Endpoint becomes enabled: SOF recovery immediately delivers intact payload */
+    epEnabled = true;
+    usb_int_rxsof_handler();
+    if (ep_tx_busy_flag != 1 || lastBuffsize != 37 || deliveredLen != 37) return 3;
+    usbd_cdc_acm_bulk_in(0, CDC_IN_EP, 37);
+    if (ep_tx_busy_flag != 0 || lastBuffsize != 0 || UserTxBufPtrOut != 37) return 4;
+    for (uint32_t i = 0; i < 37; i++) if (delivered[i] != (uint8_t)(0xa0u + i)) return 5;
+    puts("usbd_ep_start_write failure rolls back ep_tx_busy_flag and recovers cleanly on next SOF");
 }
 ''')
