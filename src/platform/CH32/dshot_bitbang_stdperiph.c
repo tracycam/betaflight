@@ -40,6 +40,7 @@
 #include "drivers/dshot_command.h"
 #include "drivers/motor.h"
 #include "drivers/nvic.h"
+#include "platform/rcc.h"
 #include "drivers/time.h"
 #include "drivers/timer.h"
 #include "platform/timer.h"
@@ -129,6 +130,7 @@ void bbTimerChannelInit(bbPort_t *bbPort)
 
 #ifdef USE_DMA_REGISTER_CACHE
 
+FAST_CODE
 static void bbLoadDMARegs(dmaResource_t *dmaResource, dmaRegCache_t *dmaRegCache)
 {
     ((DMA_ARCH_TYPE *)dmaResource)->CFGR = dmaRegCache->CFGR;
@@ -149,6 +151,7 @@ static void bbSaveDMARegs(dmaResource_t *dmaResource, dmaRegCache_t *dmaRegCache
 #endif
 
 
+FAST_CODE
 bool bbSwitchToOutput(bbPort_t *bbPort)
 {
     dmaResource_t *dmaResource = bbPort->dmaResource;
@@ -197,6 +200,7 @@ bool bbSwitchToOutput(bbPort_t *bbPort)
 }
 
 #ifdef USE_DSHOT_TELEMETRY
+FAST_CODE
 void bbSwitchToInput(bbPort_t *bbPort)
 {
     dbgPinHi(1);
@@ -224,11 +228,6 @@ void bbSwitchToInput(bbPort_t *bbPort)
     // Needs this, as it is DeInit'ed above...
     xDMA_ITConfig(dmaResource, DMA_IT_TC | DMA_IT_TE, ENABLE);
 #endif
-
-    // Reinitialize pacer timer for input
-
-    ((TIM_TypeDef *)bbPort->timhw->tim)->CNT = 0;
-    ((TIM_TypeDef *)bbPort->timhw->tim)->ATRLR = bbPort->inputARR;
 
     bbDMA_Cmd(bbPort, ENABLE);
 
@@ -296,14 +295,28 @@ void bbTIM_TimeBaseInit(bbPort_t *bbPort, uint16_t period)
 {
     TIM_TimeBaseInitTypeDef *init = &bbPort->timeBaseInit;
 
+    RCC_ClockCmd(timerRCC(bbPort->timhw->tim), ENABLE);
+
     init->TIM_Prescaler = 0; // Feed raw timerClock
     init->TIM_ClockDivision = TIM_CKD_DIV1;
     init->TIM_CounterMode = TIM_CounterMode_Up;
     init->TIM_Period = period;
+    init->TIM_RepetitionCounter = 0;
     TIM_TimeBaseInit((TIM_TypeDef *)bbPort->timhw->tim, init);
     TIM_ARRPreloadConfig((TIM_TypeDef *)bbPort->timhw->tim, ENABLE);
 }
 
+FAST_CODE
+void bbTIM_ReloadPeriod(void *TIMx, uint16_t period)
+{
+    TIM_TypeDef *tim = (TIM_TypeDef *)TIMx;
+
+    tim->ATRLR = period;
+    tim->SWEVGR = TIM_PSCReloadMode_Immediate;
+    tim->INTFR = (uint16_t)~TIM_FLAG_Update;
+}
+
+FAST_CODE
 void bbTIM_DMACmd(void *TIMx, uint16_t TIM_DMASource, FunctionalState NewState)
 {
     ch32DmaBarrier();
@@ -315,6 +328,7 @@ void bbDMA_ITConfig(bbPort_t *bbPort)
     xDMA_ITConfig(bbPort->dmaResource, DMA_IT_TC | DMA_IT_TE, ENABLE);
 }
 
+FAST_CODE
 void bbDMA_Cmd(bbPort_t *bbPort, FunctionalState NewState)
 {
     ch32DmaBarrier();

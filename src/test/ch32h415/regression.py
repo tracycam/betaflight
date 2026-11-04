@@ -306,6 +306,7 @@ int main(void) {
 bb='src/platform/CH32/dshot_bitbang.c'
 run('dshot_dma_recovery', '''
 #define USE_DSHOT_TELEMETRY
+#define DISABLE 0
 #define ENABLE 1
 #define DSHOT_BITBANG_DIRECTION_INPUT 1
 #define DSHOT_BITBANG_DIRECTION_OUTPUT 0
@@ -313,8 +314,8 @@ run('dshot_dma_recovery', '''
 #define DEBUG_SET(a,b,c) (debug[b] = (c))
 typedef int32_t timeDelta_t;
 typedef uint32_t timeUs_t;
-typedef struct { bool telemetryPending, telemetryAborted, reinitRequired, inputActive; int direction; } bbPort_t;
-typedef struct { int tim, dmaSources; } bbPacer_t;
+typedef struct { void *tim; uint16_t dmaSources, armedOutputSources, pendingOutputSources, pendingInputSources, outputARR, inputARR; } bbPacer_t;
+typedef struct { bbPacer_t *pacer; uint16_t dmaSource, outputARR, inputARR; bool telemetryPending, telemetryAborted, reinitRequired, inputActive; int direction; } bbPort_t;
 static bbPort_t bbPorts[2];
 static bbPacer_t bbPacers[1];
 static int usedMotorPorts=2, usedMotorPacers, dshotMotorCount, debug[4];
@@ -333,7 +334,8 @@ static bool bbSwitchToOutput(bbPort_t *p) {
     return true;
 }
 static void bbDMA_Cmd(bbPort_t *p, int enabled) { (void)p; enables += enabled; }
-static void bbTIM_DMACmd(int tim, int sources, int enabled) { (void)tim; (void)sources; (void)enabled; }
+static void bbTIM_ReloadPeriod(void *tim, uint16_t period) { (void)tim; (void)period; }
+static void bbTIM_DMACmd(void *tim, uint16_t sources, int enabled) { (void)tim; (void)sources; (void)enabled; }
 ''' + fn(bb,'static bool bbTelemetryWait(void)') + fn(bb,'static void bbUpdateComplete(void)') + '''
 int main(void) {
     bbPorts[0] = (bbPort_t){ .telemetryPending=true, .direction=DSHOT_BITBANG_DIRECTION_INPUT, .reinitRequired=true };
@@ -385,6 +387,7 @@ int main(void) {
 ''')
 pre='''
 #define USE_DMA_SPEC
+#define MAX_PERIPHERAL_DMA_OPTIONS 16
 #define MAX_SUPPORTED_MOTOR_PORTS 4
 #define ARRAYLEN(x) (sizeof(x)/sizeof((x)[0]))
 #define CC_CHANNELS_PER_TIMER 4
@@ -407,9 +410,9 @@ typedef struct {int tim, channel, opt;} timerHardware_t;
 #define CH3 8
 #define CH4 12
 static const timerHardware_t bbTimerHardware[] = {
- DEF_TIM(TIM1,CH1,NONE,0,8,0),DEF_TIM(TIM1,CH2,NONE,0,9,0),DEF_TIM(TIM1,CH3,NONE,0,10,0),DEF_TIM(TIM1,CH4,NONE,0,11,0),
- DEF_TIM(TIM8,CH1,NONE,0,8,0),DEF_TIM(TIM8,CH2,NONE,0,9,0),DEF_TIM(TIM8,CH3,NONE,0,10,0),DEF_TIM(TIM8,CH4,NONE,0,11,0)};
-struct { const timerHardware_t *timhw; } bbPorts[4];
+ DEF_TIM(TIM8,CH1,NONE,0,8,0),DEF_TIM(TIM1,CH1,NONE,0,9,0),DEF_TIM(TIM8,CH2,NONE,0,10,0),DEF_TIM(TIM1,CH2,NONE,0,11,0),
+ DEF_TIM(TIM8,CH3,NONE,0,12,0),DEF_TIM(TIM1,CH3,NONE,0,14,0),DEF_TIM(TIM8,CH4,NONE,0,15,0),DEF_TIM(TIM1,CH4,NONE,0,0,0)};
+struct { const timerHardware_t *timhw; dmaResource_t *dmaResource; uint32_t dmaChannel; } bbPorts[4];
 typedef struct {int owner;} resourceOwner_t;
 static resourceOwner_t freeOwner={0},busyOwner={2};
 static struct {struct {int useDshotBitbangedTimer;}dev;} config;
@@ -419,9 +422,9 @@ static int timerGetNumberByIndex(int idx){return idx;}
 static const timerHardware_t *timerGetAllocatedByNumberAndChannel(int t,int c){return NULL;}
 static const resourceOwner_t *timerGetOwner(const timerHardware_t *t){return &freeOwner;}
 static dmaoptValue_t dmaGetOptionByTimer(const timerHardware_t *t){return t->opt;}
-typedef struct {dmaResource_t *ref;} dmaChannelSpec_t;
+typedef struct {dmaResource_t *ref; uint32_t dmaMuxId;} dmaChannelSpec_t;
 static int channel;
-static const dmaChannelSpec_t *dmaGetChannelSpecByTimerValue(int t,int c,int o){static const dmaChannelSpec_t s={&channel}; return &s;}
+static const dmaChannelSpec_t *dmaGetChannelSpecByTimerValue(int t,int c,int o){static const dmaChannelSpec_t s={&channel,1}; return &s;}
 static dmaIdentifier_e dmaGetIdentifier(const dmaResource_t *d){return 1;}
 static const resourceOwner_t *dmaGetOwner(int id){return &busyOwner;}
 '''
@@ -1397,5 +1400,204 @@ int main(void) {
     dmaMuxEnable(16, DMAMUX_DMAREQ_ID_TIM7_UP);
     if (((mux_hw.CFGR12_15 >> 24) & 0xFFu) != (DMAMUX_DMAREQ_ID_TIM7_UP - 1u)) return 4;
     puts("dmaMuxEnable guards bounds/zero-underflow and enables DMAMUX + controller HB clocks");
+}
+''')
+
+bb_txt = (root/'src/platform/CH32/dshot_bitbang.c').read_text()
+bb_hw_table = bb_txt[bb_txt.index('const timerHardware_t bbTimerHardware[]'):bb_txt.index(';', bb_txt.index('const timerHardware_t bbTimerHardware[]'))+1]
+
+run('dshot_bb_multiport_dmamux', '''
+#define USE_DMA_SPEC
+#define USE_PLATFORM_DMA_FILTER
+#define MAX_PERIPHERAL_DMA_OPTIONS 16
+#define MAX_SUPPORTED_MOTOR_PORTS 4
+#define ARRAYLEN(x) (sizeof(x)/sizeof((x)[0]))
+#define CC_CHANNELS_PER_TIMER 4
+#define CC_CHANNEL_FROM_INDEX(x) ((x)*4)
+#define DSHOT_BITBANGED_TIMER_AUTO 0
+#define DSHOT_BITBANGED_TIMER_TIM1 1
+#define DSHOT_BITBANGED_TIMER_TIM8 2
+#define OWNER_FREE 0
+#define OWNER_DSHOT_BITBANG 1
+#define OWNER_SPI 2
+#define TIM1 1
+#define TIM8 8
+#define NONE 0
+#define CH1 0
+#define CH2 4
+#define CH3 8
+#define CH4 12
+typedef int resourceOwner_e;
+typedef int8_t dmaoptValue_t;
+typedef int dmaIdentifier_e;
+typedef struct { int idx; } dmaResource_t;
+typedef struct { int tim; uint8_t channel; int8_t opt; } timerHardware_t;
+#define DEF_TIM(t,ch,tag,out,dma,up) { t, ch, dma }
+''' + bb_hw_table + '''
+typedef struct { int owner; } resourceOwner_t;
+typedef struct { dmaResource_t *ref; uint32_t dmaMuxId; } dmaChannelSpec_t;
+static struct { const timerHardware_t *timhw; dmaResource_t *dmaResource; uint32_t dmaChannel; } bbPorts[4];
+static dmaResource_t dmas[16];
+static resourceOwner_t dmaOwners[16];
+static resourceOwner_t freeOwner = { OWNER_FREE };
+static struct { struct { int useDshotBitbangedTimer; } dev; } cfg;
+#define motorConfig() (&cfg)
+static int lookupTimerIndex(int tim) { return tim; }
+static int timerGetNumberByIndex(int idx) { return idx; }
+static const timerHardware_t *timerGetAllocatedByNumberAndChannel(int t, int c) { (void)t; (void)c; return NULL; }
+static const resourceOwner_t *timerGetOwner(const timerHardware_t *t) { (void)t; return &freeOwner; }
+static dmaoptValue_t dmaGetOptionByTimer(const timerHardware_t *t) { return t->opt; }
+static bool dmaIsReserved(dmaIdentifier_e id) { return id == 14; } /* DMA2_CH6 -> opt 13 */
+static dmaIdentifier_e dmaGetIdentifier(const dmaResource_t *d) { return d->idx + 1; }
+static const resourceOwner_t *dmaGetOwner(dmaIdentifier_e id) { return &dmaOwners[id - 1]; }
+static dmaChannelSpec_t specBuf;
+static const dmaChannelSpec_t *dmaGetChannelSpecByTimerValue(int tim, uint8_t ch, dmaoptValue_t opt) {
+    if (opt < 0 || opt >= 16 || opt == 13) return NULL;
+    specBuf.ref = &dmas[opt];
+    specBuf.dmaMuxId = (tim == TIM8 ? 32u : 1u) + (ch / 4u);
+    return &specBuf;
+}
+''' + fn('src/platform/CH32/timer_ch32bsp.c', 'int8_t timerGetTIMNumber(')
+    + fn('src/platform/CH32/dshot_bitbang.c', 'static void bbFindPacerTimer(void)') + '''
+int main(void) {
+    for (int i = 0; i < 16; i++) { dmas[i].idx = i; dmaOwners[i].owner = OWNER_FREE; }
+    /* Occupy DMA2_Ch1..4 (8..11) and DMA2_Ch7..8 (14..15); DMA2_Ch6 (13) is OSD-reserved.
+     * Only DMA2_Ch5 (12) and DMA1_Ch1..8 (0..7) remain free! */
+    for (int i = 8; i <= 11; i++) dmaOwners[i].owner = OWNER_SPI;
+    dmaOwners[14].owner = OWNER_SPI;
+    dmaOwners[15].owner = OWNER_SPI;
+
+    cfg.dev.useDshotBitbangedTimer = DSHOT_BITBANGED_TIMER_AUTO;
+    bbFindPacerTimer();
+    /* AUTO mode interleaves TIM8, TIM1, TIM8, TIM1 with 4 unique non-reserved DMAMUX channels */
+    int expectedTim[4] = { TIM8, TIM1, TIM8, TIM1 };
+    uint8_t expectedCh[4] = { CH1, CH1, CH2, CH2 };
+    int expectedOpt[4] = { 12, 0, 1, 2 };
+    uint32_t expectedMux[4] = { 32, 1, 33, 2 };
+    for (int p = 0; p < 4; p++) {
+        if (!bbPorts[p].timhw || bbPorts[p].timhw->tim != expectedTim[p] || bbPorts[p].timhw->channel != expectedCh[p]) return 1 + p;
+        if (bbPorts[p].dmaResource != &dmas[expectedOpt[p]] || bbPorts[p].dmaChannel != expectedMux[p]) return 10 + p;
+    }
+
+    /* Forced TIM1 mode assigns TIM1 CH1..4 across 4 unique DMAMUX channels */
+    cfg.dev.useDshotBitbangedTimer = DSHOT_BITBANGED_TIMER_TIM1;
+    bbFindPacerTimer();
+    for (int p = 0; p < 4; p++) {
+        if (!bbPorts[p].timhw || bbPorts[p].timhw->tim != TIM1 || bbPorts[p].timhw->channel != p * 4) return 20 + p;
+        for (int q = 0; q < p; q++) {
+            if (bbPorts[p].dmaResource == bbPorts[q].dmaResource) return 30 + p;
+        }
+    }
+    puts("multi-port bitbang interleaves TIM8/TIM1 and dynamically allocates collision-free DMAMUX channels across DMA2/DMA1");
+}
+''')
+
+run('dshot_bb_shared_pacer_bidir_sync', '''
+#define USE_DSHOT_TELEMETRY
+#define DEBUG_COUNT_INTERRUPT
+#define DISABLE 0
+#define ENABLE 1
+#define DSHOT_BITBANG_DIRECTION_OUTPUT 0
+#define DSHOT_BITBANG_DIRECTION_INPUT 1
+#define DSHOT_BITBANG_STATUS_OK 0
+#define DSHOT_BITBANG_STATUS_DMA_ERROR 3
+#define DMA_IT_TCIF 0x02u
+#define DMA_IT_HTIF 0x04u
+#define DMA_IT_TEIF 0x08u
+#define BB_DMA_FLAGS (DMA_IT_TCIF | DMA_IT_HTIF | DMA_IT_TEIF)
+#define TIM_PSCReloadMode_Immediate 0x01u
+#define TIM_FLAG_Update 0x01u
+#define FAST_IRQ_HANDLER
+#define FAST_CODE
+#define dbgPinHi(x) ((void)0)
+#define dbgPinLo(x) ((void)0)
+typedef uint32_t timeUs_t;
+typedef struct { uint32_t ATRLR, CNT, SWEVGR, INTFR, DMAINTENR; unsigned ugCount; uint32_t shadowATRLR; } TIM_TypeDef;
+typedef struct { TIM_TypeDef *tim; } timerHardware_t;
+typedef struct { uint32_t CFGR; } dmaResource_t;
+typedef struct { TIM_TypeDef *tim; uint16_t dmaSources, armedOutputSources; volatile uint16_t pendingOutputSources, pendingInputSources; uint16_t outputARR, inputARR; } bbPacer_t;
+typedef struct {
+    bbPacer_t *pacer;
+    timerHardware_t *timhw;
+    dmaResource_t *dmaResource;
+    uint16_t dmaSource, outputARR, inputARR;
+    uint8_t direction;
+    volatile bool telemetryPending, reinitRequired;
+    bool inputActive, telemetryAborted;
+    uint32_t outputIrq, inputIrq, errorIrq;
+} bbPort_t;
+typedef struct { uintptr_t userParam; uint32_t flags; } dmaChannelDescriptor_t;
+#define DMA_GET_FLAG_STATUS(d, f) ((d)->flags & (f))
+#define DMA_CLEAR_FLAG(d, f) ((d)->flags &= ~(f))
+static bbPacer_t bbPacers[1];
+static bbPort_t bbPorts[2];
+static int usedMotorPacers = 1, usedMotorPorts = 2, dshotMotorCount = 4, bbStatus;
+static bool useDshotTelemetry = true;
+static timeUs_t lastSendUs;
+static timeUs_t micros(void) { return 100; }
+static bool dshotCommandQueueEmpty(void) { return true; }
+static bool dshotCommandOutputIsEnabled(int n) { (void)n; return true; }
+static void bbDMA_Cmd(bbPort_t *p, int state) { p->dmaResource->CFGR = (uint32_t)state; }
+static void bbTIM_ReloadPeriod(void *TIMx, uint16_t period) {
+    TIM_TypeDef *tim = (TIM_TypeDef *)TIMx;
+    tim->ATRLR = period;
+    tim->SWEVGR = TIM_PSCReloadMode_Immediate;
+    tim->shadowATRLR = tim->ATRLR;
+    tim->CNT = 0;
+    tim->ugCount++;
+    tim->INTFR = (uint16_t)~TIM_FLAG_Update;
+}
+static void bbTIM_DMACmd(void *TIMx, uint16_t src, int state) {
+    TIM_TypeDef *tim = (TIM_TypeDef *)TIMx;
+    if (state) tim->DMAINTENR |= src;
+    else tim->DMAINTENR &= (uint16_t)~src;
+}
+static bool bbSwitchToOutput(bbPort_t *p) {
+    p->timhw->tim->ATRLR = p->outputARR;
+    p->direction = DSHOT_BITBANG_DIRECTION_OUTPUT;
+    return true;
+}
+static void bbSwitchToInput(bbPort_t *p) {
+    bbDMA_Cmd(p, ENABLE);
+    p->direction = DSHOT_BITBANG_DIRECTION_INPUT;
+}
+''' + fn('src/platform/common/stm32/dshot_bitbang_impl.h', 'static inline bool bbDMAServiceFlags(')
+    + fn('src/platform/CH32/dshot_bitbang.c', 'FAST_IRQ_HANDLER void bbDMAIrqHandler(')
+    + fn('src/platform/CH32/dshot_bitbang.c', 'static void bbUpdateComplete(void)') + '''
+int main(void) {
+    TIM_TypeDef tim1 = { .ATRLR = 154, .shadowATRLR = 154, .CNT = 77 };
+    timerHardware_t hw0 = { &tim1 }, hw1 = { &tim1 };
+    dmaResource_t dma0 = {0}, dma1 = {0};
+    bbPacers[0] = (bbPacer_t){ .tim = &tim1, .dmaSources = 0x06u };
+    bbPorts[0] = (bbPort_t){ .pacer = &bbPacers[0], .timhw = &hw0, .dmaResource = &dma0, .dmaSource = 0x02u, .outputARR = 193, .inputARR = 154, .direction = DSHOT_BITBANG_DIRECTION_INPUT };
+    bbPorts[1] = (bbPort_t){ .pacer = &bbPacers[0], .timhw = &hw1, .dmaResource = &dma1, .dmaSource = 0x04u, .outputARR = 193, .inputARR = 154, .direction = DSHOT_BITBANG_DIRECTION_INPUT };
+
+    /* 1. Normal frame: output reload happens once with shadowATRLR == 193 and both CC1|CC2 armed */
+    bbUpdateComplete();
+    if (tim1.shadowATRLR != 193 || tim1.ugCount != 1 || tim1.DMAINTENR != 0x06u) return 1;
+    tim1.CNT = 120;
+
+    /* Port 0 finishes output first: must NOT reset CNT or reload inputARR while Port 1 is still outputting */
+    dmaChannelDescriptor_t desc0 = { .userParam = (uintptr_t)&bbPorts[0], .flags = DMA_IT_TCIF };
+    bbDMAIrqHandler(&desc0);
+    if (tim1.CNT != 120 || tim1.shadowATRLR != 193 || tim1.ugCount != 1 || tim1.DMAINTENR != 0x04u) return 2;
+    if (!bbPorts[0].telemetryPending || bbPorts[0].direction != DSHOT_BITBANG_DIRECTION_INPUT || dma0.CFGR != 1) return 3;
+
+    /* Port 1 finishes output: single synchronized UG switches shadowATRLR -> 154, CNT -> 0, and enables CC1|CC2 input */
+    dmaChannelDescriptor_t desc1 = { .userParam = (uintptr_t)&bbPorts[1], .flags = DMA_IT_TCIF };
+    bbDMAIrqHandler(&desc1);
+    if (tim1.CNT != 0 || tim1.shadowATRLR != 154 || tim1.ugCount != 2 || tim1.DMAINTENR != 0x06u) return 4;
+
+    /* Both ports complete input reception cleanly */
+    desc0.flags = DMA_IT_TCIF; bbDMAIrqHandler(&desc0);
+    desc1.flags = DMA_IT_TCIF; bbDMAIrqHandler(&desc1);
+    if (bbPorts[0].telemetryPending || bbPorts[1].telemetryPending || tim1.DMAINTENR != 0) return 5;
+
+    /* 2. Fault isolation: if Port 1 hits TEIF during output after Port 0 armed input, Port 0 still receives input clocks */
+    bbUpdateComplete();
+    desc0.flags = DMA_IT_TCIF; bbDMAIrqHandler(&desc0);
+    desc1.flags = DMA_IT_TEIF; bbDMAIrqHandler(&desc1);
+    if (!bbPorts[1].reinitRequired || tim1.shadowATRLR != 154 || tim1.DMAINTENR != 0x02u) return 6;
+    puts("shared pacer synchronizes ARPE shadow reload once across multi-port output->input transitions and isolates TEIF");
 }
 ''')

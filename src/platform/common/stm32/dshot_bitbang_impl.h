@@ -141,6 +141,13 @@ typedef struct dmaRegCache_s {
 typedef struct bbPacer_s {
     timerResource_t *tim;
     uint16_t dmaSources;
+#ifdef CH32H4
+    uint16_t armedOutputSources;
+    volatile uint16_t pendingOutputSources;
+    volatile uint16_t pendingInputSources;
+    uint16_t outputARR;
+    uint16_t inputARR;
+#endif
 } bbPacer_t;
 
 #ifdef AT32F435
@@ -186,6 +193,7 @@ typedef struct bbPort_s {
     uint32_t gpioIdleBSRR;
 
 #ifdef CH32H4
+    bbPacer_t *pacer;
     uint32_t gpioCfgLrMask, gpioCfgHrMask;
     uint32_t gpioCfgLrOutput, gpioCfgHrOutput;
     uint32_t gpioCfgLrInput, gpioCfgHrInput;
@@ -303,6 +311,9 @@ bool bbSwitchToOutput(bbPort_t * bbPort);
 void bbSwitchToInput(bbPort_t * bbPort);
 
 void bbTIM_TimeBaseInit(bbPort_t *bbPort, uint16_t period);
+#ifdef CH32H4
+void bbTIM_ReloadPeriod(void *TIMx, uint16_t period);
+#endif
 #ifdef AT32F435
 void bbTIM_DMACmd(void *TIMx, uint16_t TIM_DMASource, confirm_state NewState);
 #else
