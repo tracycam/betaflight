@@ -71,6 +71,8 @@ volatile uint32_t UserTxBufPtrIn = 0;
 /* Increment this pointer or roll it back to start address when data are sent over USB */
 volatile uint32_t UserTxBufPtrOut = 0;
 static volatile uint32_t lastBuffsize = 0;
+static volatile bool usbZlpPending;
+static volatile bool usbTxStalled;
 static volatile bool usbHostPortOpen;
 
 // volatile uint32_t APP_Rx_ptr_out = 0;
@@ -113,6 +115,9 @@ void usbVcpBaudRateChanged(uint32_t baud)
 void usbVcpControlLineStateChanged(uint16_t state)
 {
     usbHostPortOpen = (state & CTRL_LINE_STATE_DTR) != 0;
+    if (usbHostPortOpen) {
+        usbTxStalled = false;
+    }
     if (ctrlLineStateCb) {
         ctrlLineStateCb(ctrlLineStateCbContext, state);
     }
@@ -155,6 +160,8 @@ void usbVcpResetState(void)
         UserTxBufPtrIn = 0;
         UserTxBufPtrOut = 0;
         lastBuffsize = 0;
+        usbZlpPending = false;
+        usbTxStalled = false;
         usbHostPortOpen = false;
     }
 }
@@ -163,20 +170,25 @@ static void usbVcpKickTx(void)
 {
     ATOMIC_BLOCK(NVIC_PRIO_USB) {
         if (ep_tx_busy_flag == 0 && usbIsConfigured()) {
-            bool sentZlp = false;
             if (lastBuffsize) {
-                const bool needZeroLengthPacket = (lastBuffsize % CDC_MAX_MPS) == 0;
-                UserTxBufPtrOut += lastBuffsize;
-                if (UserTxBufPtrOut >= APP_TX_DATA_SIZE) {
-                    UserTxBufPtrOut -= APP_TX_DATA_SIZE;
+                uint32_t nextOut = UserTxBufPtrOut + lastBuffsize;
+                if (nextOut >= APP_TX_DATA_SIZE) {
+                    nextOut -= APP_TX_DATA_SIZE;
                 }
+                if ((lastBuffsize % CDC_MAX_MPS) == 0 && nextOut == UserTxBufPtrIn) {
+                    usbZlpPending = true;
+                }
+                UserTxBufPtrOut = nextOut;
                 lastBuffsize = 0;
-                if (needZeroLengthPacket) {
-                    usb_vcp_send_data(0, (uint8_t *)&UserTxBuffer[UserTxBufPtrOut], 0);
-                    sentZlp = true;
-                }
             }
-            if (!sentZlp && UserTxBufPtrOut != UserTxBufPtrIn) {
+            if (usbZlpPending && UserTxBufPtrOut != UserTxBufPtrIn) {
+                usbZlpPending = false;
+            }
+            if (usbZlpPending) {
+                if (usb_vcp_send_data(0, (uint8_t *)&UserTxBuffer[UserTxBufPtrOut], 0) == 0) {
+                    usbZlpPending = false;
+                }
+            } else if (UserTxBufPtrOut != UserTxBufPtrIn) {
                 uint32_t buffsize = (UserTxBufPtrOut > UserTxBufPtrIn)
                     ? (APP_TX_DATA_SIZE - UserTxBufPtrOut)
                     : (UserTxBufPtrIn - UserTxBufPtrOut);
@@ -193,6 +205,7 @@ static void usbVcpKickTx(void)
 
 void usbVcpTxDoneISR(void)
 {
+    usbTxStalled = false;
     usbVcpKickTx();
 }
 
@@ -215,6 +228,10 @@ uint32_t CDC_Send_FreeBytes(void)
 
 uint32_t CDC_Send_DATA(const uint8_t *ptrBuffer, uint32_t sendLength)
 {
+    if (!usbIsConfigured() || !usbVcpIsConnected()) {
+        return 0;
+    }
+
     const timeUs_t startedAt = micros();
     uint32_t offset = 0;
 
@@ -241,7 +258,11 @@ uint32_t CDC_Send_DATA(const uint8_t *ptrBuffer, uint32_t sendLength)
             usbVcpKickTx();
         } else {
             usbVcpKickTx();
-            if (!usbVcpIsConnected() || micros() - startedAt >= USB_TIMEOUT * 1000) {
+            if (usbTxStalled || !usbIsConfigured() || !usbVcpIsConnected()) {
+                return offset;
+            }
+            if (micros() - startedAt >= USB_TIMEOUT * 1000) {
+                usbTxStalled = true;
                 return offset;
             }
             delay(1);
@@ -285,7 +306,7 @@ static bool isUsbVcpTransmitBufferEmpty(const serialPort_t *instance)
     bool empty;
     ATOMIC_BLOCK(NVIC_PRIO_USB) {
         empty = !usbIsConfigured() || !usbHostPortOpen ||
-            (!vcpPort.txAt && UserTxBufPtrOut == UserTxBufPtrIn && !lastBuffsize && !ep_tx_busy_flag);
+            (!vcpPort.txAt && UserTxBufPtrOut == UserTxBufPtrIn && !lastBuffsize && !usbZlpPending && !ep_tx_busy_flag);
     }
     return empty;
 }
@@ -349,7 +370,7 @@ static void usbVcpWriteBuf(serialPort_t *instance, const void *data, int count)
         count -= txed;
         p += txed;
 
-        if (millis() - start >= USB_TIMEOUT) {
+        if (txed == 0 || millis() - start >= USB_TIMEOUT) {
             break;
         }
     }
@@ -375,7 +396,7 @@ static bool usbVcpFlush(vcpPort_t *port)
         count -= txed;
         p += txed;
 
-        if (millis() - start >= USB_TIMEOUT) {
+        if (txed == 0 || millis() - start >= USB_TIMEOUT) {
             break;
         }
     }

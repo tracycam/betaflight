@@ -5,12 +5,14 @@
  */
 #pragma once
 
+#include <stdint.h>
+
 /**********************************/
 /*********USB high speed**********/
 /**********************************/
-typedef volatile unsigned short *PUINT16V;
-typedef volatile unsigned long *PUINT32V;
-typedef volatile unsigned char *PUINT8V;
+typedef volatile uint16_t *PUINT16V;
+typedef volatile uint32_t *PUINT32V;
+typedef volatile uint8_t *PUINT8V;
 
 /* USB high speed device register */
 #define R8_USB_CTRL             (*((PUINT8V)0x40030000)) // RW, USB_high_speed control register
@@ -377,18 +379,8 @@ typedef volatile unsigned char *PUINT8V;
 #define UDP_BC_CMPO                0x01
 
 
+#ifndef __IO
 #define __IO volatile /* defines 'read / write' permissions */
-
-#ifndef uint8_t 
-typedef  unsigned char  uint8_t;
-#endif
-
-#ifndef uint16_t 
-typedef  unsigned short int  uint16_t;
-#endif
-
-#ifndef uint32_t 
-typedef  long unsigned int  uint32_t;
 #endif
 
 

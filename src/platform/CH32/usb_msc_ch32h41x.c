@@ -67,15 +67,33 @@
 #include "drivers/sdcard.h"
 #include "pg/sdcard.h"
 
-static bool ch32SdSpiWaitPoll(void)
+typedef enum {
+    CH32_SD_OP_PENDING = 0,
+    CH32_SD_OP_OK,
+    CH32_SD_OP_ERROR,
+} ch32SdOpStatus_e;
+
+static volatile ch32SdOpStatus_e ch32SdOpStatus;
+
+static void ch32SdSpiOpCallback(sdcardBlockOperation_e operation, uint32_t blockIndex, uint8_t *buffer, uint32_t callbackData)
 {
-    const timeMs_t start = millis();
+    UNUSED(operation);
+    if (blockIndex == callbackData && buffer != NULL) {
+        ch32SdOpStatus = CH32_SD_OP_OK;
+    } else {
+        ch32SdOpStatus = CH32_SD_OP_ERROR;
+    }
+}
+
+static bool ch32SdSpiWaitReady(const timeMs_t start)
+{
     while (sdcard_poll() == 0) {
-        if (cmpTimeMs(millis(), start) > MSC_SD_IO_TIMEOUT_MS) {
+        if (!sdcard_isFunctional() || !sdcard_isInitialized() ||
+            cmpTimeMs(millis(), start) > MSC_SD_IO_TIMEOUT_MS) {
             return false;
         }
     }
-    return true;
+    return sdcard_isFunctional() && sdcard_isInitialized();
 }
 
 static int8_t ch32SdSpiInit(uint8_t lun)
@@ -100,7 +118,7 @@ static int8_t ch32SdSpiGetCapacity(uint8_t lun, uint32_t *block_num, usbd_msc_bl
 static int8_t ch32SdSpiIsReady(uint8_t lun)
 {
     UNUSED(lun);
-    return sdcard_poll() ? 0 : -1;
+    return (sdcard_poll() && sdcard_isFunctional() && sdcard_isInitialized()) ? 0 : -1;
 }
 
 static int8_t ch32SdSpiIsWriteProtected(uint8_t lun)
@@ -113,13 +131,25 @@ static int8_t ch32SdSpiRead(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uint16
 {
     UNUSED(lun);
     for (uint16_t i = 0; i < blk_len; i++) {
+        const uint32_t lba = blk_addr + i;
         const timeMs_t start = millis();
-        while (sdcard_readBlock(blk_addr + i, buf + (512u * i), NULL, 0) == 0) {
-            if (cmpTimeMs(millis(), start) > MSC_SD_IO_TIMEOUT_MS) {
+        ch32SdOpStatus = CH32_SD_OP_PENDING;
+        while (sdcard_readBlock(lba, buf + (512u * i), ch32SdSpiOpCallback, lba) == 0) {
+            if (!sdcard_isFunctional() || !sdcard_isInitialized() ||
+                cmpTimeMs(millis(), start) > MSC_SD_IO_TIMEOUT_MS) {
+                return -1;
+            }
+            (void)sdcard_poll();
+        }
+        while (ch32SdOpStatus == CH32_SD_OP_PENDING) {
+            (void)sdcard_poll();
+            if (ch32SdOpStatus == CH32_SD_OP_PENDING &&
+                (!sdcard_isFunctional() || !sdcard_isInitialized() ||
+                 cmpTimeMs(millis(), start) > MSC_SD_IO_TIMEOUT_MS)) {
                 return -1;
             }
         }
-        if (!ch32SdSpiWaitPoll()) {
+        if (ch32SdOpStatus != CH32_SD_OP_OK || !ch32SdSpiWaitReady(start)) {
             return -1;
         }
     }
@@ -130,9 +160,27 @@ static int8_t ch32SdSpiWrite(uint8_t lun, uint8_t *buf, uint32_t blk_addr, uint1
 {
     UNUSED(lun);
     for (uint16_t i = 0; i < blk_len; i++) {
-        const sdcardOperationStatus_e st = sdcard_writeBlock(blk_addr + i, buf + (512u * i), NULL, 0);
+        const uint32_t lba = blk_addr + i;
+        const timeMs_t start = millis();
+        ch32SdOpStatus = CH32_SD_OP_PENDING;
+        sdcardOperationStatus_e st;
+        while ((st = sdcard_writeBlock(lba, buf + (512u * i), ch32SdSpiOpCallback, lba)) == SDCARD_OPERATION_BUSY) {
+            if (!sdcard_isFunctional() || !sdcard_isInitialized() ||
+                cmpTimeMs(millis(), start) > MSC_SD_IO_TIMEOUT_MS) {
+                return -1;
+            }
+            (void)sdcard_poll();
+        }
         if (st == SDCARD_OPERATION_IN_PROGRESS) {
-            if (!ch32SdSpiWaitPoll()) {
+            while (ch32SdOpStatus == CH32_SD_OP_PENDING) {
+                (void)sdcard_poll();
+                if (ch32SdOpStatus == CH32_SD_OP_PENDING &&
+                    (!sdcard_isFunctional() || !sdcard_isInitialized() ||
+                     cmpTimeMs(millis(), start) > MSC_SD_IO_TIMEOUT_MS)) {
+                    return -1;
+                }
+            }
+            if (ch32SdOpStatus != CH32_SD_OP_OK || !ch32SdSpiWaitReady(start)) {
                 return -1;
             }
         } else if (st != SDCARD_OPERATION_SUCCESS) {
@@ -249,6 +297,17 @@ void usbd_msc_get_cap(uint8_t busid, uint8_t lun, uint32_t *block_num, uint32_t 
         *block_num = 0;
         *block_size = 512;
     }
+}
+
+bool usbd_msc_get_inquiry(uint8_t busid, uint8_t lun, uint8_t *inquiry_buf)
+{
+    UNUSED(busid);
+    UNUSED(lun);
+    if (!USBD_STORAGE_fops || !USBD_STORAGE_fops->pInquiry || !inquiry_buf) {
+        return false;
+    }
+    memcpy(inquiry_buf, USBD_STORAGE_fops->pInquiry, USBD_STD_INQUIRY_LENGTH);
+    return true;
 }
 
 int usbd_msc_sector_read(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length)

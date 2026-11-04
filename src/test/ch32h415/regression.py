@@ -622,7 +622,7 @@ static void (*baudRateCb)(void *, uint32_t);
 static void *baudRateCbContext;
 static void (*ctrlLineStateCb)(void *, uint16_t);
 static void *ctrlLineStateCbContext;
-static bool usbHostPortOpen;
+static bool usbHostPortOpen, usbTxStalled;
 #define CTRL_LINE_STATE_DTR 1
 static void usbd_cdc_acm_set_dtr(uint8_t bus, uint8_t intf, bool value) { (void)bus; (void)intf; (void)value; }
 static void usbd_cdc_acm_set_rts(uint8_t bus, uint8_t intf, bool value) { (void)bus; (void)intf; (void)value; }
@@ -671,7 +671,7 @@ typedef int serialPort_t;
 static struct { uint32_t txAt; } vcpPort;
 static uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
 static uint8_t ep_tx_busy_flag;
-static bool usbHostPortOpen, configured;
+static bool usbHostPortOpen, usbZlpPending, configured;
 static bool usbIsConfigured(void) { return configured; }
 ''' + fn(usb,'static bool isUsbVcpTransmitBufferEmpty(') + '''
 int main(void) {
@@ -724,6 +724,7 @@ for mps in (64, 512):
 static uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
 static uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
 static uint8_t ep_tx_busy_flag;
+static bool usbZlpPending;
 static unsigned sendCount, lastLength;
 static uint8_t usbIsConfigured(void) { return 1; }
 static int usb_vcp_send_data(int bus, uint8_t *buffer, unsigned length) {
@@ -762,6 +763,7 @@ pre='''
 #define CDC_MAX_MPS 64
 static volatile uint32_t now_ms,UserTxBufPtrIn,UserTxBufPtrOut,lastBuffsize;
 static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE],ep_tx_busy_flag;
+static volatile bool usbZlpPending,usbTxStalled;
 typedef uint32_t timeUs_t;
 typedef int serialPort_t;
 static timeUs_t micros(void){return now_ms*1000;}
@@ -1744,7 +1746,7 @@ static struct { uint32_t txAt; } vcpPort;
 static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
 static volatile uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
 static volatile uint8_t ep_tx_busy_flag;
-static bool usbHostPortOpen = true;
+static bool usbHostPortOpen = true, usbZlpPending, usbTxStalled;
 static uint8_t write_buffer[TX_BUFFER_SIZE];
 static uint8_t hostRx[16384];
 static uint32_t hostRxLen;
@@ -1801,8 +1803,14 @@ int main(void) {
     }
     pumpUsbInCompletions();
     if (hostRxLen != sizeof(src) || memcmp(src, hostRx, sizeof(src)) != 0) return 2;
-    if (chunkCount < 32 || zlpCount == 0 || !isUsbVcpTransmitBufferEmpty(NULL)) return 3;
-    puts("16KB streamed intact across 8KB ring wraparound purely via chained bulk-IN callbacks");
+    /* 16KB across an 8191B ring ends on a natural short packet -> 0 mid-stream ZLPs wasted */
+    if (chunkCount < 32 || zlpCount != 0 || !isUsbVcpTransmitBufferEmpty(NULL)) return 3;
+    /* Exact 512B burst ending at empty queue -> exactly 1 terminating ZLP */
+    hostRxLen = 0;
+    if (CDC_Send_DATA(src, 512) != 512) return 4;
+    pumpUsbInCompletions();
+    if (hostRxLen != 512 || zlpCount != 1 || !isUsbVcpTransmitBufferEmpty(NULL)) return 5;
+    puts("16KB streamed intact with zero mid-stream ZLPs and exact end-of-burst ZLP termination");
 }
 ''')
 
@@ -1818,6 +1826,7 @@ run('usb_vcp_ep_start_write_fail_recovery', '''
 static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
 static volatile uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
 static volatile uint8_t ep_tx_busy_flag;
+static volatile bool usbZlpPending, usbTxStalled;
 static uint8_t write_buffer[TX_BUFFER_SIZE];
 static bool epEnabled;
 static uint8_t delivered[128];
@@ -1930,6 +1939,7 @@ static int usbd_ep_start_write(uint8_t busid, uint8_t ep, const uint8_t *data, u
     return 0;
 }
 void usbd_msc_get_cap(uint8_t busid, uint8_t lun, uint32_t *block_num, uint32_t *block_size);
+bool usbd_msc_get_inquiry(uint8_t busid, uint8_t lun, uint8_t *inquiry_buf);
 int usbd_msc_sector_read(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length);
 int usbd_msc_sector_write(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length);
 void usbd_msc_polling(uint8_t busid);
@@ -1954,6 +1964,7 @@ static USBD_MSC_StorageType mockRoFops = {
     .GetCapacity = mockGetCap, .IsWriteProtected = mockIsWp, .Read = mockRead, .Write = mockWrite
 };
 ''' + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'void usbd_msc_get_cap(')
+    + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'bool usbd_msc_get_inquiry(')
     + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'int usbd_msc_sector_read(')
     + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'int usbd_msc_sector_write(') + '''
 static void sendCbw(uint32_t tag, uint32_t dataLen, uint8_t flags, const uint8_t *cdb, uint8_t cdbLen) {
@@ -2017,5 +2028,459 @@ int main(void) {
     sendCbw(5, 18, 0x80, reqSense, 6);
     if (lastInLen != 18 || lastInBuf[2] != 0x07u || lastInBuf[12] != 0x27u || lastInBuf[13] != 0x00u) return 10;
     puts("MSC polling defers storage I/O out of ISR and preserves WP across USB reset, MODE SENSE 6/10, and WRITE(10)");
+}
+''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/class/msc'), '-I' + str(root / 'src/platform/CH32/include')))
+
+usbhs_reg_body = ('#define USB_BASE 0x40030000u' + (root / 'lib/main/CH32H41x/middlewares/ch32h41x_hs/usb_ch32h41x_usbhs_reg.c').read_text().split('#define USB_BASE 0x40030000u', 1)[1]).split('void USBHS_IRQHandler(void)', 1)[0]
+run('usb_hs_ep_done_clear_order', '''
+#define _GNU_SOURCE
+#include <sys/mman.h>
+#define __IO volatile
+#define __WEAK __attribute__((weak))
+#define UNUSED(x) ((void)(x))
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#define CONFIG_USB_HS
+#define USB_LOG_ERR(...) ((void)0)
+#define USB_SPEED_FULL 1
+#define USB_SPEED_HIGH 2
+#define USB_ENDPOINT_TYPE_BULK 2
+#define USB_ENDPOINT_TYPE_ISOCHRONOUS 1
+#define USB_REQUEST_DIR_SHIFT 7
+#define USB_REQUEST_SET_ADDRESS 5
+#define USB_EP_GET_IDX(ep) ((uint8_t)((ep) & 0x7fu))
+#define USB_EP_DIR_IS_IN(ep) (((ep) & 0x80u) != 0)
+#define USB_EP_DIR_IS_OUT(ep) (((ep) & 0x80u) == 0)
+#define USB_GET_MAXPACKETSIZE(w) ((uint16_t)((w) & 0x07ffu))
+#define USB_GET_ENDPOINT_TYPE(a) ((uint8_t)((a) & 0x03u))
+typedef void (*usb_rxsof_handler_t)(void);
+struct usb_setup_packet { uint8_t bmRequestType, bRequest; uint16_t wValue, wIndex, wLength; };
+struct usb_endpoint_descriptor { uint8_t bLength, bDescriptorType, bEndpointAddress, bmAttributes; uint16_t wMaxPacketSize; uint8_t bInterval; };
+#include "usb_ch32h41x_usbhs_reg.h"
+static unsigned inCompleteCalls, outCompleteCalls, suspendCalls, resumeCalls, sofCalls;
+static uint8_t *nextBuf;
+int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *data, uint32_t data_len);
+int usbd_ep_start_read(uint8_t busid, const uint8_t ep, uint8_t *data, uint32_t data_len);
+static void usbd_event_reset_handler(uint8_t busid) { (void)busid; }
+static void usbd_event_suspend_handler(uint8_t busid) { (void)busid; suspendCalls++; }
+static void usbd_event_resume_handler(uint8_t busid) { (void)busid; resumeCalls++; }
+static void usbd_event_ep0_setup_complete_handler(uint8_t busid, uint8_t *s) { (void)busid; (void)s; }
+static void usbd_event_ep_in_complete_handler(uint8_t busid, uint8_t ep, uint32_t nbytes) {
+    (void)busid; (void)nbytes;
+    inCompleteCalls++;
+    if (inCompleteCalls == 1) {
+        /* Chain next packet AND simulate preempting FC ISR delaying return while new packet finishes on wire */
+        usbd_ep_start_write(0, ep, nextBuf, 0);
+        ((USBHSD_TypeDef *)0x40030000u)->UEP2_TX_CTRL |= USBHS_UEP_T_DONE;
+    }
+}
+static void usbd_event_ep_out_complete_handler(uint8_t busid, uint8_t ep, uint32_t nbytes) {
+    (void)busid; (void)nbytes;
+    outCompleteCalls++;
+    if (outCompleteCalls == 1) {
+        /* Re-arm RX AND simulate next OUT packet arriving on wire before usb_process_ep_out returns */
+        usbd_ep_start_read(0, ep, nextBuf, 512);
+        ((USBHSD_TypeDef *)0x40030000u)->UEP1_RX_LEN = 31;
+        ((USBHSD_TypeDef *)0x40030000u)->UEP1_RX_CTRL |= USBHS_UEP_R_DONE | USBHS_UEP_R_TOG_MATCH;
+    }
+}
+static void mockSof(void) { sofCalls++; }
+''' + usbhs_reg_body + '''
+int main(void) {
+    uint8_t *page = mmap((void *)0x40030000u, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    if (page == MAP_FAILED) return 1;
+    nextBuf = page + 4096;
+    USBHSD_TypeDef *dev = (USBHSD_TypeDef *)page;
+
+    /* 1. Conditional SOF IRQ enable: MSC (NULL handler) disables SOF_ACT; VCP enables SOF_ACT */
+    usb_rxsof_handler = NULL;
+    usb_dc_init(0);
+    if ((dev->INT_EN & USBHS_UDIE_SOF_ACT) != 0) return 2;
+    usb_rxsof_handler = mockSof;
+    usb_dc_init(0);
+    if ((dev->INT_EN & USBHS_UDIE_SOF_ACT) == 0) return 3;
+
+    /* 2. High-Speed 512B MPS MUST NOT truncate through uint8_t to 0 */
+    struct usb_endpoint_descriptor epIn = { .bEndpointAddress = 0x82, .bmAttributes = USB_ENDPOINT_TYPE_BULK, .wMaxPacketSize = 512 };
+    struct usb_endpoint_descriptor epOut = { .bEndpointAddress = 0x01, .bmAttributes = USB_ENDPOINT_TYPE_BULK, .wMaxPacketSize = 512 };
+    usbd_ep_open(0, &epIn);
+    usbd_ep_open(0, &epOut);
+    if (usb_dc_cfg.ep_in[2].mps != 512 || usb_dc_cfg.ep_out[1].mps != 512) return 4;
+
+    /* 3. [BUG-1] Bulk-IN: T_DONE set for chained packet before ISR exit MUST NOT be cleared */
+    usbd_ep_start_write(0, 0x82, nextBuf, 512);
+    dev->UEP2_TX_CTRL |= USBHS_UEP_T_DONE;
+    dev->INT_FG = USBHS_UDIF_TRANSFER;
+    dev->INT_ST = USBHS_UDIS_EP_DIR | 2u;
+    USBD_IRQHandler(0);
+    if (inCompleteCalls != 1 || (dev->UEP2_TX_CTRL & USBHS_UEP_T_DONE) == 0) return 5;
+    USBD_IRQHandler(0);
+    if (inCompleteCalls != 2 || (dev->UEP2_TX_CTRL & USBHS_UEP_T_DONE) != 0) return 6;
+
+    /* 4. [BUG-1] Bulk-OUT: R_DONE set for re-armed OUT packet before ISR exit MUST NOT be cleared */
+    usbd_ep_start_read(0, 0x01, nextBuf, 512);
+    dev->UEP1_RX_LEN = 31;
+    dev->UEP1_RX_CTRL |= USBHS_UEP_R_DONE | USBHS_UEP_R_TOG_MATCH;
+    dev->INT_FG = USBHS_UDIF_TRANSFER;
+    dev->INT_ST = 1u;
+    USBD_IRQHandler(0);
+    if (outCompleteCalls != 1 || (dev->UEP1_RX_CTRL & USBHS_UEP_R_DONE) == 0) return 7;
+    USBD_IRQHandler(0);
+    if (outCompleteCalls != 2 || (dev->UEP1_RX_CTRL & USBHS_UEP_R_DONE) != 0) return 8;
+
+    /* 5. [BUG-2] USBHS_UDIF_SUSPEND dispatches suspend / resume callbacks cleanly */
+    dev->INT_FG = USBHS_UDIF_SUSPEND;
+    dev->MIS_ST = USBHS_UDMS_SUSPEND;
+    USBD_IRQHandler(0);
+    dev->INT_FG = USBHS_UDIF_SUSPEND;
+    dev->MIS_ST = 0;
+    USBD_IRQHandler(0);
+    if (suspendCalls != 1 || resumeCalls != 1) return 9;
+    puts("USBHS clears T_DONE/R_DONE before re-arming, preserves 512B HS MPS, and dispatches suspend/resume");
+}
+''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/ch32h41x_hs'),))
+
+run('usb_vcp_suspend_and_stall_latch', '''
+#define UNUSED(x) ((void)(x))
+#define NVIC_PRIO_USB 0
+#define ATOMIC_BLOCK(x) for (int once = 1; once; once = 0)
+#define USB_TIMEOUT 50
+#define APP_TX_DATA_SIZE 8192
+#define APP_TX_BLOCK_SIZE 512
+#define RX_BUFFER_SIZE 2048
+#define TX_BUFFER_SIZE 512
+#define CDC_IN_EP 0x82
+#define CDC_OUT_EP 0x02
+#define CDC_MAX_MPS 64
+#define CTRL_LINE_STATE_DTR 1
+enum {
+    USBD_EVENT_RESET = 1,
+    USBD_EVENT_CONNECTED = 3,
+    USBD_EVENT_DISCONNECTED = 4,
+    USBD_EVENT_SUSPEND = 5,
+    USBD_EVENT_RESUME = 6,
+    USBD_EVENT_CONFIGURED = 7,
+    USBD_EVENT_SET_REMOTE_WAKEUP = 9,
+    USBD_EVENT_CLR_REMOTE_WAKEUP = 10,
+    USBD_EVENT_UNKNOWN = 13,
+};
+typedef uint32_t timeUs_t;
+typedef int serialPort_t;
+static struct { uint32_t txAt; } vcpPort;
+static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
+static volatile uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
+static volatile bool usbZlpPending, usbTxStalled, usbHostPortOpen;
+static volatile uint8_t ep_tx_busy_flag, usbd_cdc_info = USBD_EVENT_UNKNOWN, ep_rx_finish, cdc_configured;
+static volatile uint16_t rx_head, rx_tail;
+static uint8_t usb_drivers_buffer[CDC_MAX_MPS], write_buffer[TX_BUFFER_SIZE];
+static void (*ctrlLineStateCb)(void *, uint16_t);
+static void *ctrlLineStateCbContext;
+static uint32_t nowMs, zlpSent, dataChunksSent, failNextZlp;
+static timeUs_t micros(void) { return nowMs * 1000u; }
+static uint32_t millis(void) { return nowMs; }
+static void delay(int ms) { nowMs += (uint32_t)ms; }
+void usbVcpResetState(void);
+void usbVcpTxDoneISR(void);
+uint16_t usb_vcp_send_data(uint8_t busid, uint8_t *buffer, uint16_t len);
+static int usbd_ep_start_read(uint8_t busid, const uint8_t ep, uint8_t *data, uint32_t len) { (void)busid; (void)ep; (void)data; (void)len; return 0; }
+static int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *data, uint32_t len) {
+    (void)busid; (void)ep; (void)data;
+    if (len == 0 && failNextZlp) { failNextZlp = 0; return -1; }
+    if (len == 0) zlpSent++; else dataChunksSent++;
+    return 0;
+}
+''' + fn(usb, 'void usbVcpControlLineStateChanged(')
+    + fn(usb, 'uint8_t usbIsConnected(void)')
+    + fn(usb, 'uint8_t usbIsConfigured(void)')
+    + fn(usb, 'uint8_t usbVcpIsConnected(void)')
+    + fn(usb, 'uint8_t usbVcpIsActive(void)')
+    + fn(usb, 'void usbVcpResetState(void)')
+    + fn(usb, 'static void usbVcpKickTx(void)')
+    + fn(usb, 'void usbVcpTxDoneISR(void)')
+    + fn(usb, 'uint32_t CDC_Send_FreeBytes(void)')
+    + fn(usb, 'uint32_t CDC_Send_DATA(')
+    + fn(usb, 'static void usbVcpWriteBuf(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static void usbd_event_handler(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(') + '''
+int main(void) {
+    static uint8_t payload[APP_TX_DATA_SIZE];
+    /* 1. Resume before CONFIGURED must NOT forge CONFIGURED */
+    usbd_event_handler(0, USBD_EVENT_RESUME);
+    if (usbIsConfigured()) return 1;
+
+    /* 2. CONFIGURED -> SUSPEND clears usbVcpIsActive() so writes take 0 ms; RESUME restores CONFIGURED */
+    usbd_event_handler(0, USBD_EVENT_CONFIGURED);
+    if (!usbVcpIsActive()) return 2;
+    usbd_event_handler(0, USBD_EVENT_SUSPEND);
+    if (usbVcpIsActive()) return 3;
+    usbVcpWriteBuf(NULL, payload, sizeof(payload));
+    if (nowMs != 0) return 4;
+    usbd_event_handler(0, USBD_EVENT_RESUME);
+    if (!usbVcpIsActive()) return 5;
+
+    /* 3. Host not reading Bulk-IN: 1st overflow waits 50 ms & latches usbTxStalled; 2nd+ writes return in 0 ms! */
+    usbVcpWriteBuf(NULL, payload, sizeof(payload));
+    if (nowMs < 50 || nowMs > 60 || !usbTxStalled) return 6;
+    uint32_t tBefore = nowMs;
+    for (int i = 0; i < 20; i++) {
+        usbVcpWriteBuf(NULL, payload, 256);
+    }
+    if (nowMs != tBefore) return 7;
+
+    /* 4. Host starts reading -> usbTxStalled clears immediately; continuous 1024B burst sends ZERO mid-burst ZLPs */
+    usbd_event_handler(0, USBD_EVENT_CONFIGURED);
+    zlpSent = 0; dataChunksSent = 0;
+    if (CDC_Send_DATA(payload, 1024) != 1024) return 8;
+    if (dataChunksSent != 1 || zlpSent != 0) return 9;
+    /* Complete 1st 512B chunk while 2nd 512B is already queued: must send 2nd 512B directly, NOT a ZLP! */
+    usbd_cdc_acm_bulk_in(0, CDC_IN_EP, 512);
+    if (dataChunksSent != 2 || zlpSent != 0) return 10;
+    /* Complete 2nd 512B chunk (end of burst), with transient ZLP send failure to test ZLP retry */
+    failNextZlp = 1;
+    usbd_cdc_acm_bulk_in(0, CDC_IN_EP, 512);
+    if (zlpSent != 0 || !usbZlpPending) return 11;
+    usbVcpKickTx();
+    if (zlpSent != 1 || usbZlpPending) return 12;
+    puts("VCP tracks suspend/resume, latches stall after one 50ms timeout, and sends ZLP only at end of burst");
+}
+''')
+
+run('usb_msc_sdcard_spi_fault_detection', '''
+#define UNUSED(x) ((void)(x))
+#define MSC_SD_IO_TIMEOUT_MS 1000
+typedef uint32_t timeMs_t;
+typedef int32_t timeDelta_t;
+typedef uint16_t usbd_msc_block_size_t;
+typedef enum { SDCARD_BLOCK_OPERATION_READ, SDCARD_BLOCK_OPERATION_WRITE } sdcardBlockOperation_e;
+typedef enum { SDCARD_OPERATION_IN_PROGRESS, SDCARD_OPERATION_BUSY, SDCARD_OPERATION_SUCCESS, SDCARD_OPERATION_FAILURE } sdcardOperationStatus_e;
+typedef void (*sdcard_operationCompleteCallback_c)(sdcardBlockOperation_e op, uint32_t blk, uint8_t *buf, uint32_t data);
+typedef struct { uint32_t numBlocks; } sdcardMetadata_t;
+static timeMs_t nowMs;
+static timeMs_t millis(void) { return nowMs; }
+static timeDelta_t cmpTimeMs(timeMs_t a, timeMs_t b) { return (timeDelta_t)(a - b); }
+static bool cardFunctional = true, cardInitialized = true, cardReady = true;
+static int simMode; /* 0=ok, 1=read_crc_err_reinit, 2=write_crc_err_reinit, 3=write_busy_timeout_reset */
+static sdcard_operationCompleteCallback_c pendingCb;
+static sdcardBlockOperation_e pendingOp;
+static uint32_t pendingBlk, pendingData;
+static uint8_t *pendingBuf;
+static int pollStep;
+static bool sdcard_isFunctional(void) { return cardFunctional; }
+static bool sdcard_isInitialized(void) { return cardInitialized; }
+static bool sdcard_poll(void) {
+    nowMs += 1;
+    pollStep++;
+    if (pendingCb) {
+        sdcard_operationCompleteCallback_c cb = pendingCb;
+        pendingCb = NULL;
+        if (simMode == 1 && pendingOp == SDCARD_BLOCK_OPERATION_READ) {
+            /* Simulate sdcard_spi.c read error + transparent re-init back to READY */
+            cb(pendingOp, pendingBlk, NULL, pendingData);
+            cardReady = true;
+            return true;
+        }
+        if (simMode == 2 && pendingOp == SDCARD_BLOCK_OPERATION_WRITE) {
+            /* Simulate sdcard_spi.c write token reject + transparent re-init back to READY */
+            cb(pendingOp, pendingBlk, NULL, pendingData);
+            cardReady = true;
+            return true;
+        }
+        if (simMode == 3 && pendingOp == SDCARD_BLOCK_OPERATION_WRITE) {
+            /* SENDING_WRITE succeeds, enters WAITING_FOR_WRITE */
+            cb(pendingOp, pendingBlk, pendingBuf, pendingData);
+            cardReady = false;
+            return false;
+        }
+        cb(pendingOp, pendingBlk, pendingBuf, pendingData);
+        cardReady = true;
+        return true;
+    }
+    if (simMode == 3 && !cardReady) {
+        /* WAITING_FOR_WRITE times out -> sdcard_reset() drops initialized state! */
+        cardInitialized = false;
+        return false;
+    }
+    return cardReady;
+}
+static bool sdcard_readBlock(uint32_t blk, uint8_t *buf, sdcard_operationCompleteCallback_c cb, uint32_t data) {
+    if (!cardReady) return false;
+    cardReady = false; pendingOp = SDCARD_BLOCK_OPERATION_READ; pendingBlk = blk; pendingBuf = buf; pendingCb = cb; pendingData = data; pollStep = 0;
+    return true;
+}
+static sdcardOperationStatus_e sdcard_writeBlock(uint32_t blk, uint8_t *buf, sdcard_operationCompleteCallback_c cb, uint32_t data) {
+    if (!cardReady) return SDCARD_OPERATION_BUSY;
+    cardReady = false; pendingOp = SDCARD_BLOCK_OPERATION_WRITE; pendingBlk = blk; pendingBuf = buf; pendingCb = cb; pendingData = data; pollStep = 0;
+    return SDCARD_OPERATION_IN_PROGRESS;
+}
+typedef enum { CH32_SD_OP_PENDING = 0, CH32_SD_OP_OK, CH32_SD_OP_ERROR } ch32SdOpStatus_e;
+static volatile ch32SdOpStatus_e ch32SdOpStatus;
+''' + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'static void ch32SdSpiOpCallback(')
+    + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'static bool ch32SdSpiWaitReady(')
+    + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'static int8_t ch32SdSpiRead(')
+    + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'static int8_t ch32SdSpiWrite(') + '''
+int main(void) {
+    uint8_t buf[1024] = {0};
+    simMode = 0;
+    if (ch32SdSpiRead(0, buf, 10, 2) != 0) return 1;
+    if (ch32SdSpiWrite(0, buf, 10, 2) != 0) return 2;
+    simMode = 1;
+    if (ch32SdSpiRead(0, buf, 10, 1) == 0) return 3;
+    simMode = 2;
+    if (ch32SdSpiWrite(0, buf, 10, 1) == 0) return 4;
+    simMode = 3; cardReady = true; cardInitialized = true;
+    if (ch32SdSpiWrite(0, buf, 10, 1) == 0) return 5;
+    puts("SD SPI MSC layer detects read CRC errors, write CRC rejects, and write-busy resets without silent data loss");
+}
+''')
+
+run('usb_msc_async_reset_and_bounds', '''
+#define UNUSED(x) ((void)(x))
+#define __PACKED __attribute__((packed))
+#define __WEAK __attribute__((weak))
+#define USB_NOCACHE_RAM_SECTION
+#define USB_MEM_ALIGNX __attribute__((aligned(4)))
+#define CONFIG_USBDEV_MAX_BUS 1
+#define CONFIG_USBDEV_MSC_MAX_LUN 1
+#define CONFIG_USBDEV_MSC_MAX_BUFSIZE 4096
+#define CONFIG_USBDEV_MSC_MANUFACTURER_STRING "BETAFLT"
+#define CONFIG_USBDEV_MSC_PRODUCT_STRING "Onboard Flash"
+#define CONFIG_USBDEV_MSC_VERSION_STRING "    "
+#define CONFIG_USBDEV_MSC_POLLING
+#define USB_LOG_DBG(...) ((void)0)
+#define USB_LOG_WRN(...) ((void)0)
+#define USB_LOG_ERR(...) ((void)0)
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#define GET_BE16(p) ((uint16_t)(((uint16_t)(p)[0] << 8) | (uint16_t)(p)[1]))
+#define GET_BE32(p) (((uint32_t)(p)[0] << 24) | ((uint32_t)(p)[1] << 16) | ((uint32_t)(p)[2] << 8) | (uint32_t)(p)[3])
+enum { USBD_EVENT_RESET = 1, USBD_EVENT_INIT = 2, USBD_EVENT_DEINIT = 3, USBD_EVENT_CONFIGURED = 4 };
+struct usb_setup_packet { uint8_t bmRequestType, bRequest; uint16_t wValue, wIndex, wLength; };
+struct usbd_endpoint { uint8_t ep_addr; void (*ep_cb)(uint8_t busid, uint8_t ep, uint32_t nbytes); };
+struct usbd_interface {
+    int (*class_interface_handler)(uint8_t busid, struct usb_setup_packet *setup, uint8_t **data, uint32_t *len);
+    int (*class_endpoint_handler)(uint8_t busid, struct usb_setup_packet *setup, uint8_t **data, uint32_t *len);
+    int (*vendor_handler)(uint8_t busid, struct usb_setup_packet *setup, uint8_t **data, uint32_t *len);
+    void (*notify_handler)(uint8_t busid, uint8_t event, void *arg);
+};
+#include "usb_msc.h"
+#include "usb_scsi.h"
+#include "platform/usb_msc_storage.h"
+static uint8_t *lastReadBuf;
+static uint32_t lastReadMaxLen;
+static uint8_t lastInBuf[4096];
+static uint32_t lastInLen;
+static unsigned epWriteCalls, epReadCalls;
+static void usbd_add_endpoint(uint8_t busid, struct usbd_endpoint *ep) { (void)busid; (void)ep; }
+static int usbd_ep_set_stall(uint8_t busid, uint8_t ep) { (void)busid; (void)ep; return 0; }
+static int usbd_ep_start_read(uint8_t busid, uint8_t ep, uint8_t *data, uint32_t len) {
+    (void)busid; (void)ep; epReadCalls++; lastReadBuf = data; lastReadMaxLen = len; return 0;
+}
+static int usbd_ep_start_write(uint8_t busid, uint8_t ep, const uint8_t *data, uint32_t len) {
+    (void)busid; (void)ep; epWriteCalls++;
+    if (len > 0) memcpy(lastInBuf, data, len);
+    lastInLen = len;
+    return 0;
+}
+void usbd_msc_get_cap(uint8_t busid, uint8_t lun, uint32_t *block_num, uint32_t *block_size);
+bool usbd_msc_get_inquiry(uint8_t busid, uint8_t lun, uint8_t *inquiry_buf);
+int usbd_msc_sector_read(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length);
+int usbd_msc_sector_write(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length);
+void usbd_msc_polling(uint8_t busid);
+void msc_storage_notify_handler(uint8_t busid, uint8_t event, void *arg);
+struct usbd_interface *usbd_msc_init_intf(uint8_t busid, struct usbd_interface *intf, const uint8_t out_ep, const uint8_t in_ep);
+''' + usbd_msc_body + '''
+static USBD_MSC_StorageType *USBD_STORAGE_fops;
+static bool injectResetDuringIo;
+static void mscSetActive(void) {}
+static const uint8_t customInq[USBD_STD_INQUIRY_LENGTH] = {
+    0x00, 0x80, 0x02, 0x02, (USBD_STD_INQUIRY_LENGTH - 5), 0, 0, 0,
+    'B','E','T','A','F','L','T',' ',
+    'S','D',' ','S','t','o','r','a','g','e',' ',' ',' ',' ',' ',' ',
+    '0','.','0','1'
+};
+static int8_t mockGetCap(uint8_t lun, uint32_t *num, usbd_msc_block_size_t *sz) { (void)lun; *num = 32; *sz = 512; return 0; }
+static int8_t mockIsWp(uint8_t lun) { (void)lun; return 0; }
+static int8_t mockRead(uint8_t lun, uint8_t *buf, uint32_t addr, uint16_t len) {
+    (void)lun; (void)addr;
+    memset(buf, 0xaa, (size_t)len * 512u);
+    if (injectResetDuringIo) {
+        /* Simulate USB Bus Reset + re-CONFIGURED arriving in ISR while slow SPI SD read is running! */
+        msc_storage_notify_handler(0, USBD_EVENT_RESET, NULL);
+        msc_storage_notify_handler(0, USBD_EVENT_CONFIGURED, NULL);
+    }
+    return 0;
+}
+static int8_t mockWrite(uint8_t lun, uint8_t *buf, uint32_t addr, uint16_t len) {
+    (void)lun; (void)buf; (void)addr; (void)len;
+    if (injectResetDuringIo) {
+        msc_storage_notify_handler(0, USBD_EVENT_RESET, NULL);
+        msc_storage_notify_handler(0, USBD_EVENT_CONFIGURED, NULL);
+    }
+    return 0;
+}
+static USBD_MSC_StorageType mockRwFops = {
+    .GetCapacity = mockGetCap, .IsWriteProtected = mockIsWp, .Read = mockRead, .Write = mockWrite, .pInquiry = (int8_t *)customInq
+};
+''' + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'void usbd_msc_get_cap(')
+    + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'bool usbd_msc_get_inquiry(')
+    + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'int usbd_msc_sector_read(')
+    + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'int usbd_msc_sector_write(') + '''
+static void sendCbw(uint32_t tag, uint32_t dataLen, uint8_t flags, const uint8_t *cdb, uint8_t cdbLen) {
+    struct CBW cbw = { .dSignature = MSC_CBW_Signature, .dTag = tag, .dDataLength = dataLen, .bmFlags = flags, .bLUN = 0, .bCBLength = cdbLen };
+    memcpy(cbw.CB, cdb, cdbLen);
+    memcpy(lastReadBuf, &cbw, sizeof(cbw));
+    mass_storage_bulk_out(0, 0x01, sizeof(cbw));
+}
+int main(void) {
+    USBD_STORAGE_fops = &mockRwFops;
+    struct usbd_interface intf = {0};
+    usbd_msc_init_intf(0, &intf, 0x01, 0x81);
+    msc_storage_notify_handler(0, USBD_EVENT_CONFIGURED, NULL);
+
+    /* 1. Dynamic pInquiry string returned for SD storage */
+    const uint8_t inqCmd[6] = { SCSI_CMD_INQUIRY, 0, 0, 0, 36, 0 };
+    sendCbw(1, 36, 0x80, inqCmd, 6);
+    if (lastInLen != 36 || memcmp(&lastInBuf[16], "SD Storage      ", 16) != 0) return 1;
+    mass_storage_bulk_in(0, 0x81, 36);
+    mass_storage_bulk_in(0, 0x81, USB_SIZEOF_MSC_CSW);
+
+    /* 2. [BUG-4] Async USB Reset during READ(10) polling MUST NOT underflow nsectors or touch EP1 IN */
+    injectResetDuringIo = true;
+    const uint8_t rd10[10] = { SCSI_CMD_READ10, 0, 0, 0, 0, 4, 0, 0, 4, 0 };
+    sendCbw(2, 2048, 0x80, rd10, 10);
+    unsigned writesBefore = epWriteCalls;
+    usbd_msc_polling(0);
+    if (epWriteCalls != writesBefore || g_usbd_msc[0].nsectors != 0 || g_usbd_msc[0].stage != MSC_READ_CBW) return 2;
+    if (lastReadBuf != (uint8_t *)&g_usbd_msc[0].cbw || lastReadMaxLen != USB_SIZEOF_MSC_CBW) return 3;
+
+    /* 3. [BUG-4] Async USB Reset during WRITE(10) polling MUST NOT underflow nsectors or send phantom CSW */
+    const uint8_t wr10[10] = { SCSI_CMD_WRITE10, 0, 0, 0, 0, 4, 0, 0, 4, 0 };
+    sendCbw(3, 2048, 0x00, wr10, 10);
+    mass_storage_bulk_out(0, 0x01, 2048);
+    writesBefore = epWriteCalls;
+    usbd_msc_polling(0);
+    if (epWriteCalls != writesBefore || g_usbd_msc[0].nsectors != 0 || g_usbd_msc[0].stage != MSC_READ_CBW) return 4;
+    injectResetDuringIo = false;
+
+    /* 4. Medium #2: 32-bit LBA overflow (0xFFFFFFFF + 2) in WRITE(10) and READ(10) rejected with LBAOUTOFRANGE (0x05/0x21/0x00) */
+    const uint8_t badWr10[10] = { SCSI_CMD_WRITE10, 0, 0xff, 0xff, 0xff, 0xff, 0, 0, 2, 0 };
+    sendCbw(4, 1024, 0x00, badWr10, 10);
+    if (g_usbd_msc[0].stage != MSC_READ_CBW) return 5;
+    const uint8_t reqSense[6] = { SCSI_CMD_REQUESTSENSE, 0, 0, 0, 18, 0 };
+    sendCbw(5, 18, 0x80, reqSense, 6);
+    if (lastInLen != 18 || lastInBuf[2] != 0x05u || lastInBuf[12] != 0x21u) return 6;
+    mass_storage_bulk_in(0, 0x81, 18);
+    mass_storage_bulk_in(0, 0x81, USB_SIZEOF_MSC_CSW);
+
+    /* 5. Short Bulk-OUT packet (< 512B) fails cleanly with CSW_STATUS_CMD_FAILED */
+    sendCbw(6, 1024, 0x00, wr10, 10); /* wait: dDataLength mismatch 1024 vs 4*512=2048 must also fail! */
+    if (g_usbd_msc[0].stage != MSC_READ_CBW) return 7;
+    const uint8_t wr2[10] = { SCSI_CMD_WRITE10, 0, 0, 0, 0, 4, 0, 0, 2, 0 };
+    sendCbw(7, 1024, 0x00, wr2, 10);
+    mass_storage_bulk_out(0, 0x01, 64); /* bogus short OUT packet */
+    usbd_msc_polling(0);
+    struct CSW csw = {0};
+    memcpy(&csw, lastInBuf, sizeof(csw));
+    if (lastInLen != sizeof(csw) || csw.bStatus != CSW_STATUS_CMD_FAILED) return 8;
+    puts("MSC survives async USB reset during sector I/O, guards 32-bit LBA overflow, and serves dynamic INQUIRY");
 }
 ''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/class/msc'), '-I' + str(root / 'src/platform/CH32/include')))

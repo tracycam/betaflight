@@ -84,10 +84,12 @@ volatile uint16_t ep_rx_length = 0;
 
 static volatile uint16_t rx_head = 0; // write p
 static volatile uint16_t rx_tail = 0; // read p
+static volatile uint8_t cdc_configured = 0;
 
 static void usbd_event_handler(uint8_t busid, uint8_t event) {
   switch (event) {
   case USBD_EVENT_RESET:
+    cdc_configured = 0;
     usbd_cdc_info = (uint8_t)USBD_EVENT_RESET;
     ep_tx_busy_flag = 0;
     ep_rx_finish = 0;
@@ -99,6 +101,7 @@ static void usbd_event_handler(uint8_t busid, uint8_t event) {
     usbd_cdc_info = (uint8_t)USBD_EVENT_CONNECTED;
     break;
   case USBD_EVENT_DISCONNECTED:
+    cdc_configured = 0;
     usbd_cdc_info = (uint8_t)USBD_EVENT_DISCONNECTED;
     ep_tx_busy_flag = 0;
     ep_rx_finish = 0;
@@ -107,15 +110,18 @@ static void usbd_event_handler(uint8_t busid, uint8_t event) {
     usbVcpResetState();
     break;
   case USBD_EVENT_RESUME:
-    usbd_cdc_info = (uint8_t)USBD_EVENT_RESUME;
+    usbd_cdc_info = cdc_configured ? (uint8_t)USBD_EVENT_CONFIGURED
+                                   : (uint8_t)USBD_EVENT_RESUME;
     break;
   case USBD_EVENT_SUSPEND:
     usbd_cdc_info = (uint8_t)USBD_EVENT_SUSPEND;
     break;
   case USBD_EVENT_CONFIGURED:
+    cdc_configured = 1;
     usbd_cdc_info = (uint8_t)USBD_EVENT_CONFIGURED;
     ep_tx_busy_flag = 0;
     ep_rx_finish = 0;
+    usbVcpResetState();
     /* setup first out ep read transfer */
     usbd_ep_start_read(busid, CDC_OUT_EP, usb_drivers_buffer, CDC_MAX_MPS);
     break;

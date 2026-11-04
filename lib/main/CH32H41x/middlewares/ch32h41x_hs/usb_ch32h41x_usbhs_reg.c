@@ -13,32 +13,32 @@
 #define CH32H41x_USBHS_DEV ((USBHSD_TypeDef *)USB_BASE)
 
 #define USB_SET_RX_DMA(ep_idx, addr)                                           \
-  (*(volatile uint32_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP1_RX_DMA) +       \
+  (*(volatile uint32_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP1_RX_DMA) +      \
                           4 * (ep_idx - 1)) = addr)
 #define USB_SET_TX_DMA(ep_idx, addr)                                           \
-  (*(volatile uint32_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP1_TX_DMA) +       \
+  (*(volatile uint32_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP1_TX_DMA) +      \
                           4 * (ep_idx - 1)) = addr)
 
 #define USB_SET_MAX_LEN(ep_idx, len)                                           \
-  (*(volatile uint16_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP0_MAX_LEN) +      \
+  (*(volatile uint16_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP0_MAX_LEN) +     \
                           4 * ep_idx) = len)
 #define USB_SET_TX_LEN(ep_idx, len)                                            \
-  (*(volatile uint16_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP0_TX_LEN) +       \
+  (*(volatile uint16_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP0_TX_LEN) +      \
                           4 * ep_idx) = len)
 #define USB_GET_TX_LEN(ep_idx)                                                 \
-  (*(volatile uint16_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP0_TX_LEN) +       \
+  (*(volatile uint16_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP0_TX_LEN) +      \
                           4 * ep_idx))
 #define USB_SET_TX_CTRL(ep_idx, val)                                           \
-  (*(volatile uint8_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP0_TX_CTRL) +       \
+  (*(volatile uint8_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP0_TX_CTRL) +      \
                          4 * ep_idx) = val)
 #define USB_GET_TX_CTRL(ep_idx)                                                \
-  (*(volatile uint8_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP0_TX_CTRL) +       \
+  (*(volatile uint8_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP0_TX_CTRL) +      \
                          4 * ep_idx))
 #define USB_SET_RX_CTRL(ep_idx, val)                                           \
-  (*(volatile uint8_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP0_RX_CTRL) +       \
+  (*(volatile uint8_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP0_RX_CTRL) +      \
                          4 * ep_idx) = val)
 #define USB_GET_RX_CTRL(ep_idx)                                                \
-  (*(volatile uint8_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP0_RX_CTRL) +       \
+  (*(volatile uint8_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP0_RX_CTRL) +      \
                          4 * ep_idx))
 #define EPn_SET_TX_NAK(ep_idx)                                                 \
   USB_SET_TX_CTRL(ep_idx, (USB_GET_TX_CTRL(ep_idx) & ~USBHS_UEP_T_RES_MASK) |  \
@@ -53,10 +53,10 @@
   USB_SET_RX_CTRL(ep_idx, (USB_GET_RX_CTRL(ep_idx) & ~USBHS_UEP_R_RES_MASK) |  \
                               USBHS_UEP_R_RES_ACK)
 #define EPn_GET_RX_LEN(ep_idx)                                                 \
-  (*(volatile uint16_t *)((uint32_t)(&CH32H41x_USBHS_DEV->USB_EP0_RX_LEN) +    \
+  (*(volatile uint16_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->USB_EP0_RX_LEN) +   \
                           4 * ep_idx))
 #define EPn_SET_TX_LEN(ep_idx, len)                                            \
-  (*(volatile uint16_t *)((uint32_t)(&CH32H41x_USBHS_DEV->UEP0_TX_LEN) +       \
+  (*(volatile uint16_t *)((uintptr_t)(&CH32H41x_USBHS_DEV->UEP0_TX_LEN) +      \
                           4 * ep_idx) = len)
 #define EPn_CLEAR_TX_DONE(ep_idx)                                              \
   USB_SET_TX_CTRL(ep_idx, USB_GET_TX_CTRL(ep_idx) & ~USBHS_UEP_T_DONE)
@@ -64,6 +64,12 @@
   USB_SET_RX_CTRL(ep_idx, USB_GET_RX_CTRL(ep_idx) & ~USBHS_UEP_R_DONE)
 #define EPn_SET_TX_ISO_VALID(ep_idx)
 #define EPn_SET_RX_ISO_VALID(ep_idx)
+
+#ifdef __riscv
+#define USB_MEMORY_BARRIER() asm volatile ("fence iorw, iorw" ::: "memory")
+#else
+#define USB_MEMORY_BARRIER() asm volatile ("" ::: "memory")
+#endif
 
 /* ep nums */
 #ifndef CONFIG_USBDEV_EP_NUM
@@ -74,7 +80,7 @@
  * @brief   Endpoint information structure
  */
 typedef struct _usbd_ep_info {
-  uint8_t mps;       /* Maximum packet length of endpoint */
+  uint16_t mps;      /* Maximum packet length of endpoint */
   uint8_t eptype;    /* Endpoint Type */
   uint8_t ep_enable; /* Endpoint enable */
   uint8_t *xfer_buf;
@@ -108,10 +114,13 @@ usb_rxsof_handler_t usb_rxsof_handler = NULL;
 int usb_dc_init(uint8_t busid) {
   usb_dc_low_level_init();
   CH32H41x_USBHS_DEV->CONTROL = USBHS_UD_RST_LINK | USBHS_UD_PHY_SUSPENDM;
-  CH32H41x_USBHS_DEV->INT_EN = USBHS_UDIE_SOF_ACT | USBHS_UDIE_BUS_RST |
-                               USBHS_UDIE_SUSPEND | USBHS_UDIE_BUS_SLEEP |
-                               USBHS_UDIE_LPM_ACT | USBHS_UDIE_TRANSFER |
-                               USBHS_UDIE_LINK_RDY;
+  uint8_t int_en = USBHS_UDIE_BUS_RST | USBHS_UDIE_SUSPEND |
+                   USBHS_UDIE_BUS_SLEEP | USBHS_UDIE_LPM_ACT |
+                   USBHS_UDIE_TRANSFER | USBHS_UDIE_LINK_RDY;
+  if (usb_rxsof_handler != NULL) {
+    int_en |= USBHS_UDIE_SOF_ACT;
+  }
+  CH32H41x_USBHS_DEV->INT_EN = int_en;
   /* Enable all end points */
   CH32H41x_USBHS_DEV->UEP_TX_EN = 0xffff;
   CH32H41x_USBHS_DEV->UEP_RX_EN = 0xffff;
@@ -184,7 +193,7 @@ int usbd_ep_open(uint8_t busid, const struct usb_endpoint_descriptor *ep) {
     return -1;
   }
 
-  uint8_t mps = USB_GET_MAXPACKETSIZE(ep->wMaxPacketSize);
+  uint16_t mps = USB_GET_MAXPACKETSIZE(ep->wMaxPacketSize);
   USB_SET_MAX_LEN(epid, mps);
 
   if (USB_EP_DIR_IS_IN(ep->bEndpointAddress)) {
@@ -311,7 +320,7 @@ int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *data,
   if (!usb_dc_cfg.ep_in[ep_idx].ep_enable) {
     return -2;
   }
-  if ((uint32_t)data & 0x03) {
+  if ((uintptr_t)data & 0x03) {
     return -3;
   }
 
@@ -325,7 +334,7 @@ int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *data,
     } else {
       data_len = MIN(data_len, usb_dc_cfg.ep_in[ep_idx].mps);
       USB_SET_TX_LEN(ep_idx, data_len);
-      CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)data;
+      CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)(uintptr_t)data;
     }
   } else {
     if (data_len == 0) {
@@ -333,11 +342,11 @@ int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *data,
     } else {
       data_len = MIN(data_len, usb_dc_cfg.ep_in[ep_idx].mps);
       USB_SET_TX_LEN(ep_idx, data_len);
-      USB_SET_TX_DMA(ep_idx, (uint32_t)data);
+      USB_SET_TX_DMA(ep_idx, (uint32_t)(uintptr_t)data);
     }
   }
 
-  asm volatile ("fence iorw, iorw" ::: "memory");
+  USB_MEMORY_BARRIER();
   EPn_SET_TX_VALID(ep_idx);
   return 0;
 }
@@ -370,7 +379,7 @@ int usbd_ep_start_read(uint8_t busid, const uint8_t ep, uint8_t *data,
   if (!usb_dc_cfg.ep_out[ep_idx].ep_enable) {
     return -2;
   }
-  if ((uint32_t)data & 0x03) {
+  if ((uintptr_t)data & 0x03) {
     return -3;
   }
 
@@ -381,13 +390,13 @@ int usbd_ep_start_read(uint8_t busid, const uint8_t ep, uint8_t *data,
   if (ep_idx == 0) {
     if (data_len == 0) {
     } else {
-      CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)data;
+      CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)(uintptr_t)data;
     }
   } else {
-    USB_SET_RX_DMA(ep_idx, (uint32_t)data);
+    USB_SET_RX_DMA(ep_idx, (uint32_t)(uintptr_t)data);
   }
 
-  asm volatile ("fence iorw, iorw" ::: "memory");
+  USB_MEMORY_BARRIER();
   EPn_SET_RX_VALID(ep_idx);
   return 0;
 }
@@ -415,13 +424,13 @@ static inline void handle_ep0_in(void) {
     case USB_REQUEST_SET_ADDRESS:
       /* Fill in the equipment address */
       CH32H41x_USBHS_DEV->DEV_AD = usb_dc_cfg.address;
-      CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)&usb_dc_cfg.setup;
+      CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)(uintptr_t)&usb_dc_cfg.setup;
       EPn_SET_TX_NAK(0);
       EPn_SET_RX_VALID(0);
       break;
     default:
       /* Normal out state phase */
-      CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)&usb_dc_cfg.setup;
+      CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)(uintptr_t)&usb_dc_cfg.setup;
       EPn_SET_TX_NAK(0);
       EPn_SET_RX_VALID(0);
       break;
@@ -441,10 +450,10 @@ static inline void handle_non_ep0_in(uint8_t epid) {
     uint32_t write_count =
         MIN(usb_dc_cfg.ep_in[epid].xfer_len, usb_dc_cfg.ep_in[epid].mps);
     USB_SET_TX_LEN(epid, write_count);
-    USB_SET_TX_DMA(epid, (uint32_t)usb_dc_cfg.ep_in[epid].xfer_buf);
+    USB_SET_TX_DMA(epid, (uint32_t)(uintptr_t)usb_dc_cfg.ep_in[epid].xfer_buf);
 
     if (usb_dc_cfg.ep_in[epid].eptype != USB_ENDPOINT_TYPE_ISOCHRONOUS) {
-      asm volatile ("fence iorw, iorw" ::: "memory");
+      USB_MEMORY_BARRIER();
       EPn_SET_TX_VALID(epid);
     } else {
       EPn_SET_TX_ISO_VALID(epid);
@@ -458,23 +467,30 @@ static inline void handle_non_ep0_in(uint8_t epid) {
 }
 
 static inline void usb_process_ep_in(uint8_t epid) {
+  EPn_SET_TX_NAK(epid);
+  EPn_CLEAR_TX_DONE(epid);
+  USB_MEMORY_BARRIER();
+
   if (epid == 0) {
     handle_ep0_in();
   } else {
     handle_non_ep0_in(epid);
   }
-
-  EPn_CLEAR_TX_DONE(epid);
 }
 
 static inline void usb_process_ep_out(uint8_t epid) {
   EPn_SET_RX_NAK(epid);
-  asm volatile ("fence iorw, iorw" ::: "memory");
+  USB_MEMORY_BARRIER();
+  const uint8_t rx_ctrl = USB_GET_RX_CTRL(epid);
+  const uint32_t read_count = EPn_GET_RX_LEN(epid);
+  EPn_CLEAR_RX_DONE(epid);
+  USB_MEMORY_BARRIER();
+
   if (epid == 0) {
-    if (CH32H41x_USBHS_DEV->UEP0_RX_CTRL & USBHS_UEP_R_SETUP_IS) {
+    if (rx_ctrl & USBHS_UEP_R_SETUP_IS) {
       CH32H41x_USBHS_DEV->UEP0_RX_CTRL |= USBHS_UEP_R_TOG_DATA1;
       CH32H41x_USBHS_DEV->UEP0_TX_CTRL |= USBHS_UEP_T_TOG_DATA1;
-      if (usb_dc_cfg.setup.bmRequestType >> USB_REQUEST_DIR_SHIFT == 0) {
+      if ((usb_dc_cfg.setup.bmRequestType >> USB_REQUEST_DIR_SHIFT) == 0) {
         /**
          * Ep0 The next in must be the status stage.
          * The device must reply to the host data 0 length packet.
@@ -487,31 +503,36 @@ static inline void usb_process_ep_out(uint8_t epid) {
       usbd_event_ep0_setup_complete_handler(0, (uint8_t *)&usb_dc_cfg.setup);
     } else {
       CH32H41x_USBHS_DEV->UEP0_RX_CTRL ^= USBHS_UEP_R_TOG_DATA1;
-      uint32_t read_count = EPn_GET_RX_LEN(0);
       usb_dc_cfg.ep_out[0].actual_xfer_len += read_count;
-      usb_dc_cfg.ep_out[0].xfer_len -= read_count;
+      usb_dc_cfg.ep_out[0].xfer_len =
+          (usb_dc_cfg.ep_out[0].xfer_len > read_count)
+              ? (usb_dc_cfg.ep_out[0].xfer_len - read_count)
+              : 0;
       usbd_event_ep_out_complete_handler(0, 0x00,
                                          usb_dc_cfg.ep_out[0].actual_xfer_len);
       if (read_count == 0) {
         /* Out status, start reading setup */
-        CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)&usb_dc_cfg.setup;
+        CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)(uintptr_t)&usb_dc_cfg.setup;
         EPn_SET_RX_VALID(0);
       }
     }
   } else {
-    if (USB_GET_RX_CTRL(epid) & USBHS_UEP_R_TOG_MATCH) {
-      uint32_t read_count = EPn_GET_RX_LEN(epid);
+    if (rx_ctrl & USBHS_UEP_R_TOG_MATCH) {
       usb_dc_cfg.ep_out[epid].xfer_buf += read_count;
       usb_dc_cfg.ep_out[epid].actual_xfer_len += read_count;
-      usb_dc_cfg.ep_out[epid].xfer_len -= read_count;
+      usb_dc_cfg.ep_out[epid].xfer_len =
+          (usb_dc_cfg.ep_out[epid].xfer_len > read_count)
+              ? (usb_dc_cfg.ep_out[epid].xfer_len - read_count)
+              : 0;
 
       if ((read_count < usb_dc_cfg.ep_out[epid].mps) ||
           (usb_dc_cfg.ep_out[epid].xfer_len == 0)) {
         usbd_event_ep_out_complete_handler(
             0, ((epid) & 0x7f), usb_dc_cfg.ep_out[epid].actual_xfer_len);
       } else {
-        USB_SET_RX_DMA(epid, (uint32_t)usb_dc_cfg.ep_out[epid].xfer_buf);
+        USB_SET_RX_DMA(epid, (uint32_t)(uintptr_t)usb_dc_cfg.ep_out[epid].xfer_buf);
         if (usb_dc_cfg.ep_out[epid].eptype != USB_ENDPOINT_TYPE_ISOCHRONOUS) {
+          USB_MEMORY_BARRIER();
           EPn_SET_RX_VALID(epid);
         } else {
           EPn_SET_RX_ISO_VALID(epid);
@@ -519,8 +540,6 @@ static inline void usb_process_ep_out(uint8_t epid) {
       }
     }
   }
-
-  EPn_CLEAR_RX_DONE(epid);
 }
 
 static inline void usb_trans_end_process(void) {
@@ -555,22 +574,22 @@ void USBD_IRQHandler(uint8_t busid) {
     CH32H41x_USBHS_DEV->DEV_AD = 0;
     usbd_event_reset_handler(0);
     /* Set ep0 rx vaild to start receive setup packet */
-    CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)&usb_dc_cfg.setup;
+    CH32H41x_USBHS_DEV->UEP0_DMA = (uint32_t)(uintptr_t)&usb_dc_cfg.setup;
     // EPn_SET_RX_VALID(0);
     R8_UEP0_TX_CTRL = USBHS_UEP_T_RES_NAK;
     R8_UEP0_RX_CTRL = USBHS_UEP_R_RES_ACK;
     CH32H41x_USBHS_DEV->INT_FG = USBHS_UDIF_BUS_RST;
   } else if (intflag & USBHS_UDIF_SUSPEND) {
-    if (CH32H41x_USBHS_DEV->MIS_ST & USBHS_UDMS_SUSPEND) {
-      /* Suspend */
-    } else {
-      /* Wake up */
-    }
     CH32H41x_USBHS_DEV->INT_FG = USBHS_UDIF_SUSPEND;
-  } else if (intflag & USBHS_UDIE_SOF_ACT) {
+    if (CH32H41x_USBHS_DEV->MIS_ST & USBHS_UDMS_SUSPEND) {
+      usbd_event_suspend_handler(0);
+    } else {
+      usbd_event_resume_handler(0);
+    }
+  } else if (intflag & USBHS_UDIF_RX_SOF) {
     if (usb_rxsof_handler != NULL)
       usb_rxsof_handler();
-    CH32H41x_USBHS_DEV->INT_FG = USBHS_UDIE_SOF_ACT;
+    CH32H41x_USBHS_DEV->INT_FG = USBHS_UDIF_RX_SOF;
   } else {
     CH32H41x_USBHS_DEV->INT_FG = intflag;
   }
