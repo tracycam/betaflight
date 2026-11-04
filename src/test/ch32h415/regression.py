@@ -1205,3 +1205,197 @@ int main(void){USART_TypeDef usart={.CTLR1=USART_CTLR1_TCIE};dma_t reg={.CFGR=1,
  dmaChannelDescriptor_t desc={.userParam=(uintptr_t)&d,.flags=DMA_IT_TCIF};uartDmaIrqHandler(&desc);
  return reg.CFGR!=0||monitorCalls!=1||d.port.txCompletePending;}
 ''')
+
+dma_hdr = (root/'lib/main/CH32H41x/Peripheral/inc/ch32h417_dma.h').read_text()
+dma_enum = dma_hdr[dma_hdr.index('typedef enum'):dma_hdr.index('} dmamux_requst_id_sel_type;')+len('} dmamux_requst_id_sel_type;')]
+reqmap_txt = (root/'src/platform/CH32/dma_reqmap_mcu.c').read_text()
+reqmap_body = reqmap_txt[reqmap_txt.index('typedef struct dmaPeripheralMapping_s'):reqmap_txt.index('const dmaChannelSpec_t *dmaGetChannelSpecByTimer(')]
+timer_def_txt = (root/'src/platform/CH32/timer_def.h').read_text()
+timer_def_body = timer_def_txt[timer_def_txt.index('#ifdef USE_THEIA_OSD'):timer_def_txt.index('// AF table for timer')]
+reqmap_common = '''
+#include "''' + str(root/'src/main/common/utils.h') + '''"
+#include "''' + str(root/'src/platform/CH32/dma_reqmap_mcu.h') + '''"
+''' + dma_enum + '''
+typedef struct dmaResource_s { int dummy; } dmaResource_t;
+typedef struct timerResource_s { int dummy; } timerResource_t;
+typedef uint8_t ioTag_t;
+typedef uint16_t dmaCode_t;
+typedef int8_t dmaoptValue_t;
+#define DMA_OPT_UNUSED (-1)
+typedef struct dmaChannelSpec_s {
+    dmaCode_t code;
+    dmaResource_t *ref;
+    uint32_t dmaMuxId;
+} dmaChannelSpec_t;
+#define DMA_CODE(dma, stream, chanreq) (((dma) << 12) | ((stream) << 8) | ((chanreq) << 0))
+#define DMA_CODE_CONTROLLER(code) (((code) >> 12) & 0xf)
+#define DMA_CODE_STREAM(code) (((code) >> 8) & 0xf)
+typedef enum {
+    DMA_PERIPH_SPI_SDO,
+    DMA_PERIPH_SPI_SDI,
+    DMA_PERIPH_ADC,
+    DMA_PERIPH_SDIO,
+    DMA_PERIPH_UART_TX,
+    DMA_PERIPH_UART_RX,
+    DMA_PERIPH_TIMUP,
+} dmaPeripheral_e;
+#define TIM_Channel_1 0x00
+#define TIM_Channel_2 0x04
+#define TIM_Channel_3 0x08
+#define TIM_Channel_4 0x0C
+#define TIMER_OUTPUT_NONE 0
+#define TIMER_OUTPUT_N_CHANNEL 1
+static timerResource_t t1,t2,t3,t4,t5,t6,t7,t8,t9,t10,t11,t12;
+#define TIM1 (&t1)
+#define TIM2 (&t2)
+#define TIM3 (&t3)
+#define TIM4 (&t4)
+#define TIM5 (&t5)
+#define TIM6 (&t6)
+#define TIM7 (&t7)
+#define TIM8 (&t8)
+#define TIM9 (&t9)
+#define TIM10 (&t10)
+#define TIM11 (&t11)
+#define TIM12 (&t12)
+static dmaResource_t d1[8], d2[8];
+#define DMA1_Channel1 (&d1[0])
+#define DMA1_Channel2 (&d1[1])
+#define DMA1_Channel3 (&d1[2])
+#define DMA1_Channel4 (&d1[3])
+#define DMA1_Channel5 (&d1[4])
+#define DMA1_Channel6 (&d1[5])
+#define DMA1_Channel7 (&d1[6])
+#define DMA1_Channel8 (&d1[7])
+#define DMA2_Channel1 (&d2[0])
+#define DMA2_Channel2 (&d2[1])
+#define DMA2_Channel3 (&d2[2])
+#define DMA2_Channel4 (&d2[3])
+#define DMA2_Channel5 (&d2[4])
+#define DMA2_Channel6 (&d2[5])
+#define DMA2_Channel7 (&d2[6])
+#define DMA2_Channel8 (&d2[7])
+#define USE_TIMER
+#define USE_SPI
+#define USE_ADC
+#define SPIDEV_1 0
+#define SPIDEV_2 1
+#define SPIDEV_3 2
+#define SPIDEV_4 3
+#define ADCDEV_1 0
+#define ADCDEV_2 1
+#define TIM_N(n) (1U << (n))
+''' + timer_def_body + '''
+#define TIMER_INDEX(i) BITCOUNT((TIM_N(i) - 1) & USED_TIMERS)
+''' + reqmap_body
+
+run('dma_reqmap_theia_osd', '#define USE_THEIA_OSD\n' + reqmap_common + '''
+int main(void) {
+    if (MAX_TIMER_DMA_OPTIONS != 16 || MAX_PERIPHERAL_DMA_OPTIONS != 16) return 1;
+    if (DEF_TIM_DMA_REQ__BTCH_TIM6_UP != DMAMUX_DMAREQ_ID_TIM6_UP) return 2;
+    if (DEF_TIM_DMA_REQ__BTCH_TIM7_UP != DMAMUX_DMAREQ_ID_TIM7_UP) return 3;
+    const dmaChannelSpec_t *s;
+    if (TIMER_INDEX(3) != 1 || TIMER_INDEX(9) != 7) return 4;
+    s = dmaGetChannelSpecByPeripheral(DMA_PERIPH_TIMUP, TIMER_INDEX(3), 0);
+    if (!s || s->dmaMuxId != DMAMUX_DMAREQ_ID_TIM3_UP || s->ref != DMA1_Channel1) return 5;
+    s = dmaGetChannelSpecByPeripheral(DMA_PERIPH_TIMUP, TIMER_INDEX(6), 8);
+    if (!s || s->dmaMuxId != DMAMUX_DMAREQ_ID_TIM6_UP || s->ref != DMA2_Channel1) return 6;
+    s = dmaGetChannelSpecByPeripheral(DMA_PERIPH_TIMUP, TIMER_INDEX(7), 9);
+    if (!s || s->dmaMuxId != DMAMUX_DMAREQ_ID_TIM7_UP || s->ref != DMA2_Channel2) return 7;
+    s = dmaGetChannelSpecByPeripheral(DMA_PERIPH_TIMUP, TIMER_INDEX(9), 15);
+    if (!s || s->dmaMuxId != DMAMUX_DMAREQ_ID_TIM9_UP || s->ref != DMA2_Channel8) return 8;
+    if (dmaGetChannelSpecByPeripheral(DMA_PERIPH_TIMUP, 8, 0) != NULL) return 9;
+    if (dmaGetChannelSpecByPeripheral(DMA_PERIPH_TIMUP, TIMER_INDEX(3), 13) != NULL) return 10;
+    if (dmaGetChannelSpecByPeripheral(DMA_PERIPH_TIMUP, TIMER_INDEX(3), 16) != NULL) return 11;
+    s = dmaGetChannelSpecByTimerValue(TIM9, TIM_Channel_1, 0);
+    if (!s || s->dmaMuxId != DMAMUX_DMAREQ_ID_TIM9_CH1) return 12;
+    s = dmaGetChannelSpecByTimerValue(TIM9, TIM_Channel_4, 15);
+    if (!s || s->dmaMuxId != DMAMUX_DMAREQ_ID_TIM9_CH4 || s->ref != DMA2_Channel8) return 13;
+    if (dmaGetChannelSpecByTimerValue(TIM2, TIM_Channel_1, 0) != NULL) return 14;
+    if (dmaGetChannelSpecByTimerValue(TIM10, TIM_Channel_1, 0) != NULL) return 15;
+    if (dmaGetChannelSpecByTimerValue(TIM11, TIM_Channel_2, 0) != NULL) return 16;
+    if (dmaGetChannelSpecByTimerValue(TIM12, TIM_Channel_4, 0) != NULL) return 17;
+    if (dmaGetChannelSpecByTimerValue(TIM9, TIM_Channel_1, 13) != NULL) return 18;
+    if (dmaGetChannelSpecByTimerValue(TIM9, TIM_Channel_1, 16) != NULL) return 19;
+    puts("OSD mode preserves TIM3_UP/TIM6_UP/TIM7_UP/TIM9_UP and TIM9 CC while isolating OSD timers and DMA2_CH6");
+}
+''')
+
+run('dma_reqmap_full_no_osd', reqmap_common + '''
+int main(void) {
+    timerResource_t *tims[9] = {TIM1, TIM2, TIM3, TIM4, TIM5, TIM8, TIM9, TIM10, TIM11};
+    uint32_t ch1_reqs[9] = {
+        DMAMUX_DMAREQ_ID_TIM1_CH1, DMAMUX_DMAREQ_ID_TIM2_CH1, DMAMUX_DMAREQ_ID_TIM3_CH1,
+        DMAMUX_DMAREQ_ID_TIM4_CH1, DMAMUX_DMAREQ_ID_TIM5_CH1, DMAMUX_DMAREQ_ID_TIM8_CH1,
+        DMAMUX_DMAREQ_ID_TIM9_CH1, DMAMUX_DMAREQ_ID_TIM10_CH1, DMAMUX_DMAREQ_ID_TIM11_CH1,
+    };
+    for (unsigned i = 0; i < 9; i++) {
+        const dmaChannelSpec_t *s = dmaGetChannelSpecByTimerValue(tims[i], TIM_Channel_1, 13);
+        if (!s || s->dmaMuxId != ch1_reqs[i]) return 1 + i;
+    }
+    const dmaChannelSpec_t *s12 = dmaGetChannelSpecByTimerValue(TIM12, TIM_Channel_4, 15);
+    if (!s12 || s12->dmaMuxId != DMAMUX_DMAREQ_ID_TIM12_CH4) return 20;
+    uint32_t up_reqs[12] = {
+        DMAMUX_DMAREQ_ID_TIM1_UP, DMAMUX_DMAREQ_ID_TIM2_UP, DMAMUX_DMAREQ_ID_TIM3_UP,
+        DMAMUX_DMAREQ_ID_TIM4_UP, DMAMUX_DMAREQ_ID_TIM5_UP, DMAMUX_DMAREQ_ID_TIM6_UP,
+        DMAMUX_DMAREQ_ID_TIM7_UP, DMAMUX_DMAREQ_ID_TIM8_UP, DMAMUX_DMAREQ_ID_TIM9_UP,
+        DMAMUX_DMAREQ_ID_TIM10_UP, DMAMUX_DMAREQ_ID_TIM11_UP, DMAMUX_DMAREQ_ID_TIM12_UP,
+    };
+    for (unsigned n = 1; n <= 12; n++) {
+        const dmaChannelSpec_t *su = dmaGetChannelSpecByPeripheral(DMA_PERIPH_TIMUP, TIMER_INDEX(n), 0);
+        if (!su || su->dmaMuxId != up_reqs[n - 1]) return 30 + n;
+    }
+    puts("non-OSD mode exposes all TIM1..12 CC and TIM_UP DMAMUX mappings");
+}
+''')
+
+run('dma_mux_enable_bounds_and_clocks', dma_enum + '''
+typedef int dmaIdentifier_e;
+#define DMA_NONE 0
+#define DMA_FIRST_HANDLER 1
+#define DMA_LAST_HANDLER 16
+#define DMA_IDENTIFIER_TO_INDEX(x) ((x) - DMA_FIRST_HANDLER)
+#define ENABLE 1
+#define RCC_HB_DMA1 0x01u
+#define RCC_HB_DMA2 0x02u
+#define RCC_HB(periph) RCC_HB_ ## periph
+typedef struct { uint32_t CFGR0_3, CFGR4_7, CFGR8_11, CFGR12_15; } DMAMUX_TypeDef;
+static DMAMUX_TypeDef mux_hw;
+#define DMAMUX (&mux_hw)
+static int dma1_token, dma2_token;
+#define DMA1 (&dma1_token)
+#define DMA2 (&dma2_token)
+typedef void (*dmaCallbackHandlerFuncPtr)(void *);
+typedef struct { void *dma; dmaCallbackHandlerFuncPtr irqHandlerCallback; int32_t irqN; uint32_t userParam; } dmaChannelDescriptor_t;
+static dmaChannelDescriptor_t dmaDescriptors[DMA_LAST_HANDLER];
+static uint32_t enabled_clocks;
+static void RCC_ClockCmd(uint32_t periph, int state) { if (state) enabled_clocks |= periph; }
+static void NVIC_SetPriority(int32_t irq, uint32_t prio) { (void)irq; (void)prio; }
+static void NVIC_EnableIRQ(int32_t irq) { (void)irq; }
+#define CH32_DMAMUX_MAX_REQUEST_ID DMAMUX_DMAREQ_ID_TIM7_UP
+''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_dma.c', 'void DMA_MuxChannelConfig(')
+    + fn('src/platform/CH32/dma_ch32h41x.c', 'static void enableDmaClock(')
+    + fn('src/platform/CH32/dma_ch32h41x.c', 'void dmaEnable(')
+    + fn('src/platform/CH32/dma_ch32h41x.c', 'void dmaMuxEnable(')
+    + fn('src/platform/CH32/dma_ch32h41x.c', 'void dmaSetHandler(') + '''
+int main(void) {
+    for (int i = 0; i < 8; i++) dmaDescriptors[i].dma = DMA1;
+    for (int i = 8; i < 16; i++) dmaDescriptors[i].dma = DMA2;
+    mux_hw.CFGR0_3 = 0x55555555u;
+    dmaMuxEnable(DMA_NONE, DMAMUX_DMAREQ_ID_TIM1_CH1);
+    dmaMuxEnable(DMA_LAST_HANDLER + 1, DMAMUX_DMAREQ_ID_TIM1_CH1);
+    dmaMuxEnable(1, 0);
+    dmaMuxEnable(1, 0x7Cu);
+    dmaEnable(DMA_NONE);
+    dmaEnable(DMA_LAST_HANDLER + 1);
+    dmaSetHandler(DMA_NONE, NULL, 0, 0);
+    dmaSetHandler(DMA_LAST_HANDLER + 1, NULL, 0, 0);
+    if (enabled_clocks != 0 || mux_hw.CFGR0_3 != 0x55555555u) return 1;
+    dmaMuxEnable(9, DMAMUX_DMAREQ_ID_TIM9_CH1);
+    if (enabled_clocks != (RCC_HB_DMA1 | RCC_HB_DMA2)) return 2;
+    if ((mux_hw.CFGR8_11 & 0xFFu) != (DMAMUX_DMAREQ_ID_TIM9_CH1 - 1u)) return 3;
+    dmaMuxEnable(16, DMAMUX_DMAREQ_ID_TIM7_UP);
+    if (((mux_hw.CFGR12_15 >> 24) & 0xFFu) != (DMAMUX_DMAREQ_ID_TIM7_UP - 1u)) return 4;
+    puts("dmaMuxEnable guards bounds/zero-underflow and enables DMAMUX + controller HB clocks");
+}
+''')
