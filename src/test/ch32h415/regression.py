@@ -978,7 +978,8 @@ static void GPIO_Init(gpio_t *p, GPIO_InitTypeDef *g) {
 }
 static void taskSystemLoad(timeUs_t t) { (void)t; tasks++; }
 static void ch32h415UsbReleaseForDebug(void) { handoffs++; }
-''' + fn('src/platform/CH32/target/CH32H415/boot_sdi.c', 'void ch32h415BootSdiSystemTask(') + '''
+''' + fn('src/platform/CH32/target/CH32H415/boot_sdi.c', 'void ch32h415BootSdiPoll(')
+    + fn('src/platform/CH32/target/CH32H415/boot_sdi.c', 'void ch32h415BootSdiSystemTask(') + '''
 int main(void) {
     uint32_t t = UINT32_MAX - 1000u;
     ch32h415BootSdiSystemTask(t);
@@ -1735,3 +1736,167 @@ int main(void) {
     puts("usbd_ep_start_write failure rolls back ep_tx_busy_flag and recovers cleanly on next SOF");
 }
 ''')
+
+run('usb_hs_pll_hse_mapping', '''
+#define RCC_USBHSPLLRefer_25M 0x00u
+#define RCC_USBHSPLLRefer_20M 0x01u
+#define RCC_USBHSPLLRefer_24M 0x02u
+#define RCC_USBHSPLLRefer_32M 0x03u
+''' + fn('src/platform/CH32/usb_ch32h41x.h', 'static inline bool ch32UsbHsResolvePllConfig(') + '''
+int main(void) {
+    uint32_t ref = 0, div = 0;
+    if (!ch32UsbHsResolvePllConfig(25000000u, &ref, &div) || ref != RCC_USBHSPLLRefer_25M || div != 0x0000u) return 1;
+    if (!ch32UsbHsResolvePllConfig(20000000u, &ref, &div) || ref != RCC_USBHSPLLRefer_20M || div != 0x0000u) return 2;
+    if (!ch32UsbHsResolvePllConfig(24000000u, &ref, &div) || ref != RCC_USBHSPLLRefer_24M || div != 0x0000u) return 3;
+    if (!ch32UsbHsResolvePllConfig(32000000u, &ref, &div) || ref != RCC_USBHSPLLRefer_32M || div != 0x0000u) return 4;
+    if (!ch32UsbHsResolvePllConfig(48000000u, &ref, &div) || ref != RCC_USBHSPLLRefer_24M || div != 0x0100u) return 5;
+    if (!ch32UsbHsResolvePllConfig(50000000u, &ref, &div) || ref != RCC_USBHSPLLRefer_25M || div != 0x0100u) return 6;
+    if (ch32UsbHsResolvePllConfig(0u, &ref, &div)) return 7;
+    if (ch32UsbHsResolvePllConfig(13000000u, &ref, &div)) return 8;
+    if (ch32UsbHsResolvePllConfig(25000000u * 33u, &ref, &div)) return 9;
+    puts("USBHS PLL resolver maps 20/24/25/32/48/50 MHz crystals and rejects unsupported frequencies");
+}
+''')
+
+usb_cfg_text = (root / 'lib/main/CH32H41x/middlewares/board/usb_config.h').read_text()
+if '\n#define CONFIG_USBDEV_MSC_POLLING\n' not in usb_cfg_text:
+    raise RuntimeError('usb_config.h must enable CONFIG_USBDEV_MSC_POLLING')
+usbd_msc_body = ('#define MSD_OUT_EP_IDX 0' + (root / 'lib/main/CH32H41x/middlewares/class/msc/usbd_msc.c').read_text().split('#define MSD_OUT_EP_IDX 0', 1)[1]).split('__WEAK void usbd_msc_get_cap', 1)[0]
+run('usb_msc_polling_and_readonly', '''
+#define UNUSED(x) ((void)(x))
+#define __PACKED __attribute__((packed))
+#define __WEAK __attribute__((weak))
+#define USB_NOCACHE_RAM_SECTION
+#define USB_MEM_ALIGNX __attribute__((aligned(4)))
+#define CONFIG_USBDEV_MAX_BUS 1
+#define CONFIG_USBDEV_MSC_MAX_LUN 1
+#define CONFIG_USBDEV_MSC_MAX_BUFSIZE 4096
+#define CONFIG_USBDEV_MSC_MANUFACTURER_STRING "BETAFLT"
+#define CONFIG_USBDEV_MSC_PRODUCT_STRING "Onboard Flash"
+#define CONFIG_USBDEV_MSC_VERSION_STRING "    "
+#define CONFIG_USBDEV_MSC_POLLING
+#define USB_LOG_DBG(...) ((void)0)
+#define USB_LOG_WRN(...) ((void)0)
+#define USB_LOG_ERR(...) ((void)0)
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#define GET_BE16(p) ((uint16_t)(((uint16_t)(p)[0] << 8) | (uint16_t)(p)[1]))
+#define GET_BE32(p) (((uint32_t)(p)[0] << 24) | ((uint32_t)(p)[1] << 16) | ((uint32_t)(p)[2] << 8) | (uint32_t)(p)[3])
+enum { USBD_EVENT_RESET = 1, USBD_EVENT_INIT = 2, USBD_EVENT_DEINIT = 3, USBD_EVENT_CONFIGURED = 4 };
+struct usb_setup_packet { uint8_t bmRequestType, bRequest; uint16_t wValue, wIndex, wLength; };
+struct usbd_endpoint { uint8_t ep_addr; void (*ep_cb)(uint8_t busid, uint8_t ep, uint32_t nbytes); };
+struct usbd_interface {
+    int (*class_interface_handler)(uint8_t busid, struct usb_setup_packet *setup, uint8_t **data, uint32_t *len);
+    int (*class_endpoint_handler)(uint8_t busid, struct usb_setup_packet *setup, uint8_t **data, uint32_t *len);
+    int (*vendor_handler)(uint8_t busid, struct usb_setup_packet *setup, uint8_t **data, uint32_t *len);
+    void (*notify_handler)(uint8_t busid, uint8_t event, void *arg);
+};
+#include "usb_msc.h"
+#include "usb_scsi.h"
+#include "platform/usb_msc_storage.h"
+static uint8_t *lastReadBuf;
+static uint32_t lastReadMaxLen;
+static uint8_t lastInBuf[4096];
+static uint32_t lastInLen;
+static unsigned stallCalls;
+static void usbd_add_endpoint(uint8_t busid, struct usbd_endpoint *ep) { (void)busid; (void)ep; }
+static int usbd_ep_set_stall(uint8_t busid, uint8_t ep) { (void)busid; (void)ep; stallCalls++; return 0; }
+static int usbd_ep_start_read(uint8_t busid, uint8_t ep, uint8_t *data, uint32_t len) {
+    (void)busid; (void)ep; lastReadBuf = data; lastReadMaxLen = len; return 0;
+}
+static int usbd_ep_start_write(uint8_t busid, uint8_t ep, const uint8_t *data, uint32_t len) {
+    (void)busid; (void)ep;
+    if (len > sizeof(lastInBuf)) abort();
+    if (len > 0) memcpy(lastInBuf, data, len);
+    lastInLen = len;
+    return 0;
+}
+void usbd_msc_get_cap(uint8_t busid, uint8_t lun, uint32_t *block_num, uint32_t *block_size);
+int usbd_msc_sector_read(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length);
+int usbd_msc_sector_write(uint8_t busid, uint8_t lun, uint32_t sector, uint8_t *buffer, uint32_t length);
+void usbd_msc_polling(uint8_t busid);
+void usbd_msc_set_readonly(uint8_t busid, bool readonly);
+struct usbd_interface *usbd_msc_init_intf(uint8_t busid, struct usbd_interface *intf, const uint8_t out_ep, const uint8_t in_ep);
+''' + usbd_msc_body + '''
+static USBD_MSC_StorageType *USBD_STORAGE_fops;
+static unsigned readCalls, writeCalls, activeCalls;
+static uint8_t fakeDisk[16 * 512];
+static void mscSetActive(void) { activeCalls++; }
+static int8_t mockGetCap(uint8_t lun, uint32_t *num, usbd_msc_block_size_t *sz) { (void)lun; *num = 16; *sz = 512; return 0; }
+static int8_t mockIsWp(uint8_t lun) { (void)lun; return 1; }
+static int8_t mockRead(uint8_t lun, uint8_t *buf, uint32_t addr, uint16_t len) {
+    (void)lun; readCalls++;
+    memcpy(buf, &fakeDisk[addr * 512u], (size_t)len * 512u);
+    return 0;
+}
+static int8_t mockWrite(uint8_t lun, uint8_t *buf, uint32_t addr, uint16_t len) {
+    (void)lun; (void)buf; (void)addr; (void)len; writeCalls++; return 0;
+}
+static USBD_MSC_StorageType mockRoFops = {
+    .GetCapacity = mockGetCap, .IsWriteProtected = mockIsWp, .Read = mockRead, .Write = mockWrite
+};
+''' + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'void usbd_msc_get_cap(')
+    + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'int usbd_msc_sector_read(')
+    + fn('src/platform/CH32/usb_msc_ch32h41x.c', 'int usbd_msc_sector_write(') + '''
+static void sendCbw(uint32_t tag, uint32_t dataLen, uint8_t flags, const uint8_t *cdb, uint8_t cdbLen) {
+    struct CBW cbw = { .dSignature = MSC_CBW_Signature, .dTag = tag, .dDataLength = dataLen, .bmFlags = flags, .bLUN = 0, .bCBLength = cdbLen };
+    memcpy(cbw.CB, cdb, cdbLen);
+    memcpy(lastReadBuf, &cbw, sizeof(cbw));
+    mass_storage_bulk_out(0, 0x01, sizeof(cbw));
+}
+int main(void) {
+    for (size_t i = 0; i < sizeof(fakeDisk); i++) fakeDisk[i] = (uint8_t)((i * 37u + 9u) & 0xffu);
+    USBD_STORAGE_fops = &mockRoFops;
+    struct usbd_interface intf = {0};
+    usbd_msc_init_intf(0, &intf, 0x01, 0x81);
+    usbd_msc_set_readonly(0, mockRoFops.IsWriteProtected(0) != 0);
+
+    /* 1. USB Bus Reset + MSC Class Reset MUST preserve readonly = true */
+    msc_storage_notify_handler(0, USBD_EVENT_RESET, NULL);
+    struct usb_setup_packet rstReq = { .bRequest = MSC_REQUEST_RESET };
+    uint8_t dummy = 0, *dp = &dummy; uint32_t dl = 0;
+    if (intf.class_interface_handler(0, &rstReq, &dp, &dl) != 0 || !g_usbd_msc[0].readonly) return 1;
+    msc_storage_notify_handler(0, USBD_EVENT_CONFIGURED, NULL);
+
+    /* 2. MODE SENSE(6) and MODE SENSE(10) both report WP bit 0x80 */
+    const uint8_t ms6[6] = { SCSI_CMD_MODESENSE6, 0, 0x3f, 0, 4, 0 };
+    sendCbw(1, 4, 0x80, ms6, 6);
+    if (lastInLen != 4 || (lastInBuf[2] & 0x80u) != 0x80u) return 2;
+    mass_storage_bulk_in(0, 0x81, 4);
+    mass_storage_bulk_in(0, 0x81, USB_SIZEOF_MSC_CSW);
+
+    const uint8_t ms10[10] = { SCSI_CMD_MODESENSE10, 0, 0x3f, 0, 0, 0, 0, 0, 27, 0 };
+    sendCbw(2, 27, 0x80, ms10, 10);
+    if (lastInLen != 27 || (lastInBuf[3] & 0x80u) != 0x80u) return 3;
+    mass_storage_bulk_in(0, 0x81, 27);
+    mass_storage_bulk_in(0, 0x81, USB_SIZEOF_MSC_CSW);
+
+    /* 3. READ(10) defers Flash read out of ISR into usbd_msc_polling(0) */
+    const uint8_t rd10[10] = { SCSI_CMD_READ10, 0, 0, 0, 0, 2, 0, 0, 2, 0 };
+    sendCbw(3, 1024, 0x80, rd10, 10);
+    if (readCalls != 0) return 4;
+    usbd_msc_polling(0);
+    if (readCalls != 1 || activeCalls != 1 || lastInLen != 1024 || memcmp(lastInBuf, &fakeDisk[2 * 512], 1024) != 0) return 5;
+    mass_storage_bulk_in(0, 0x81, 1024);
+    struct CSW csw = {0};
+    memcpy(&csw, lastInBuf, sizeof(csw));
+    if (lastInLen != sizeof(csw) || csw.bStatus != CSW_STATUS_CMD_PASSED || csw.dTag != 3) return 6;
+    mass_storage_bulk_in(0, 0x81, sizeof(csw));
+
+    /* 4. WRITE(10) on read-only volume drains OUT data without touching storage and reports KCQ 0x072700 */
+    const uint8_t wr10[10] = { SCSI_CMD_WRITE10, 0, 0, 0, 0, 2, 0, 0, 2, 0 };
+    sendCbw(4, 1024, 0x00, wr10, 10);
+    if (lastReadMaxLen != 1024) return 7;
+    memset(lastReadBuf, 0x55, 1024);
+    mass_storage_bulk_out(0, 0x01, 1024);
+    if (writeCalls != 0) return 8;
+    usbd_msc_polling(0);
+    memcpy(&csw, lastInBuf, sizeof(csw));
+    if (writeCalls != 0 || stallCalls != 0 || lastInLen != sizeof(csw) || csw.bStatus != CSW_STATUS_CMD_FAILED || csw.dDataResidue != 1024) return 9;
+    mass_storage_bulk_in(0, 0x81, sizeof(csw));
+
+    const uint8_t reqSense[6] = { SCSI_CMD_REQUESTSENSE, 0, 0, 0, 18, 0 };
+    sendCbw(5, 18, 0x80, reqSense, 6);
+    if (lastInLen != 18 || lastInBuf[2] != 0x07u || lastInBuf[12] != 0x27u || lastInBuf[13] != 0x00u) return 10;
+    puts("MSC polling defers storage I/O out of ISR and preserves WP across USB reset, MODE SENSE 6/10, and WRITE(10)");
+}
+''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/class/msc'), '-I' + str(root / 'src/platform/CH32/include')))

@@ -38,6 +38,7 @@
 
 #include "ch32_debug.h"
 #include "cdc_vcp_ch32h41x.h"
+#include "usb_ch32h41x.h"
 #include "usbd_core.h"
 #include "usbd_cdc_acm.h"
 #include "usb_ch32h41x_usbhs_reg.h"
@@ -428,31 +429,9 @@ static const struct serialPortVTable usbVTable[] = {
 
 void usbVcpInit(void)
 {
-    RCC_HB2PeriphClockCmd(RCC_HB2Periph_AFIO | RCC_HB2Periph_GPIOB, ENABLE);
-    GPIO_PinRemapConfig(GPIO_Remap_SWJ_Disable, ENABLE);
-
-    IOInit(IOGetByTag(IO_TAG(PB8)), OWNER_USB, 0);
-    IOInit(IOGetByTag(IO_TAG(PB9)), OWNER_USB, 0);
-
-    usbGenerateDisconnectPulse();
-
-    if ((RCC->PLLCFGR & RCC_SYSPLL_SEL) != RCC_SYSPLL_USBHS) {
-        /* Initialize USBHS 480M PLL */
-        RCC_USBHS_PLLCmd(DISABLE);
-        RCC_USBHSPLLCLKConfig(RCC_USBHSPLLSource_HSE);
-        RCC_USBHSPLLReferConfig(RCC_USBHSPLLRefer_25M);
-        RCC_USBHSPLLClockSourceDivConfig(RCC_USBHSPLL_IN_Div1);
-        RCC_USBHS_PLLCmd(ENABLE);
-        for (volatile uint32_t wait = 0; RCC_GetFlagStatus(RCC_FLAG_USBHSPLLRDY) == RESET; wait++) {
-            if (wait >= 100000) {
-                return;
-            }
-        }
+    if (!ch32UsbHsPhyInit()) {
+        return;
     }
-    /* Enable UTMI Clock */
-    RCC_UTMIcmd(ENABLE);
-    /* Enable USBHS Clock */
-    RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS, ENABLE);
 
     usb_rxsof_handler = usb_int_rxsof_handler;
     cdc_acm_init(0, 0);
@@ -462,15 +441,19 @@ void usbVcpInit(void)
 
     NVIC_SetPriority(USBHS_IRQn, NVIC_PRIO_USB);
     NVIC_EnableIRQ(USBHS_IRQn);
-
-    // TxTimerConfig();
-
-    // vcpPort_t *s = &vcpPort;
-    // s->port.vTable = usbVTable;
-    // return &s->port;
 }
 
 #if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+void ch32h415UsbMarkCoreInitialized(void)
+{
+    usbCoreInitialized = true;
+}
+
+bool ch32h415UsbIsReleasedForDebug(void)
+{
+    return usbReleasedForDebug;
+}
+
 void ch32h415UsbReleaseForDebug(void)
 {
     /* Called from the system task, never the USB interrupt. Disable the IRQ

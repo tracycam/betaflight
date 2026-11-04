@@ -42,11 +42,12 @@
 #ifndef CH32H415_NO_USB
 #define USE_VCP
 #define USE_USB_DETECT
+#define USE_USB_MSC
 #else
 #undef USE_VCP
 #undef USE_USB_DETECT
-#endif
 #undef USE_USB_MSC
+#endif
 
 #if defined(CH32H415_BOOT_SDI)
 #define USE_PLATFORM_SYSTEM_LOAD_TASK

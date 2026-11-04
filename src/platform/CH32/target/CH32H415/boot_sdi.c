@@ -9,12 +9,11 @@
 
 #define BOOT_SDI_HOLD_US 5000000u
 
-void ch32h415BootSdiSystemTask(timeUs_t nowUs)
+void ch32h415BootSdiPoll(timeUs_t nowUs)
 {
     static bool initialized, holding, switched;
     static timeUs_t pressedAt;
 
-    taskSystemLoad(nowUs);
     if (switched) {
         return;
     }
@@ -35,5 +34,11 @@ void ch32h415BootSdiSystemTask(timeUs_t nowUs)
         ch32h415UsbReleaseForDebug();
         switched = true;
     }
+}
+
+void ch32h415BootSdiSystemTask(timeUs_t nowUs)
+{
+    taskSystemLoad(nowUs);
+    ch32h415BootSdiPoll(nowUs);
 }
 #endif

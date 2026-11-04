@@ -103,7 +103,7 @@ static inline void USB_MCPY(uint8_t* DA,uint8_t* SA,uint8_t* EA)
 #endif
 
 /* move msc read & write from isr to while(1), you should call usbd_msc_polling in while(1) */
-// #define CONFIG_USBDEV_MSC_POLLING
+#define CONFIG_USBDEV_MSC_POLLING
 
 /* move msc read & write from isr to thread */
 // #define CONFIG_USBDEV_MSC_THREAD

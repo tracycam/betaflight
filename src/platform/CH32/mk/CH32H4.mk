@@ -58,8 +58,17 @@ VPATH           := $(VPATH):$(LIB_MAIN_DIR)/CH32H41x/Cmsis/Core:$(LIB_MAIN_DIR)/
 VCP_SRC =  \
            ch32h41x_hs/usb_ch32h41x_usbhs_reg.c \
            class/cdc/usbd_cdc_acm.c \
+           class/msc/usbd_msc.c \
            core/usbd_core.c \
            board/cdc_vcp_ch32h41x.c
+
+MSC_SRC = \
+           drivers/usb_msc_common.c \
+           CH32/usb_msc_ch32h41x.c \
+           msc/usbd_storage.c \
+           msc/usbd_storage_emfat.c \
+           msc/emfat.c \
+           msc/emfat_file.c
 
 VCP_INCLUDES = \
         $(MIDDLEWARES_DIR)/ch32h41x_hs \
@@ -148,7 +157,6 @@ MCU_COMMON_SRC = \
         common/stm32/dshot_dpwm.c \
         common/stm32/dshot_bitbang_shared.c \
         drivers/bus_i2c_timing.c \
-        drivers/usb_msc_common.c \
         drivers/adc.c \
         drivers/bus_spi_config.c \
         common/stm32/bus_i2c_pinconfig.c \
@@ -160,8 +168,6 @@ MCU_COMMON_SRC = \
         drivers/serial_escserial.c \
         drivers/serial_pinconfig.c \
         drivers/usb_io.c \
-        msc/emfat.c \
-        msc/emfat_file.c \
         common/stm32/ledstrip_ws2811_stm32.c \
         common/stm32/debug_pin.c \
         common/stm32/adc_impl.c \

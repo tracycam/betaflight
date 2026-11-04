@@ -40,6 +40,7 @@ bool usbCableIsActive(void) { return false; }
 void systemReset(void)
 {
     __disable_irq();
+    asm volatile ("fence iorw, iorw" ::: "memory");
     NVIC_SystemReset();
 }
 

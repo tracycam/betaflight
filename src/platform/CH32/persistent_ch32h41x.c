@@ -47,6 +47,7 @@ uint32_t simbkpdataread(uint32_t id)
 void simbkpdatawrite(uint32_t id, uint32_t value)
 {
     *(volatile uint32_t *)(BKP_DATA_ADDR + id * 4) = value;
+    asm volatile ("fence rw, rw" ::: "memory");
 }
 
 uint32_t getsoftresetflag(void)
