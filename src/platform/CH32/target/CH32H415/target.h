@@ -121,6 +121,9 @@
 #ifndef CLOUD_BUILD
 #define USE_LED_STRIP
 #define USE_LED_STRIP_STATUS_MODE
+#ifndef USE_CAMERA_CONTROL
+#define USE_CAMERA_CONTROL
+#endif
 #endif
 
 // #define USE_VTX

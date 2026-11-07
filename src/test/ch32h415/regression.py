@@ -2635,3 +2635,274 @@ int main(void) {
     puts("WS2811 LED strip selects 16/32-bit CCR width, exact 800 kHz timing, and race-free DMA completion");
 }
 ''')
+run('camera_control_modes_and_fallback', '''
+#include <math.h>
+#define CAMERA_CONTROL_HARDWARE_PWM_AVAILABLE
+#define CAMERA_CONTROL_SOFTWARE_PWM_AVAILABLE
+#define CAMERA_CONTROL_DAC_AVAILABLE
+#define USE_PWM_OUTPUT
+#define __FAST_INTERRUPT
+#define CAMERA_CONTROL_VDD_VOLTAGE 3.3f
+#define CAMERA_CONTROL_PWM_RESOLUTION 128
+#define CAMERA_CONTROL_SOFT_PWM_RESOLUTION 448
+#define CAMERA_CONTROL_DAC_MAX_CODE 4095U
+#define CAMERA_CONTROL_SOFT_PWM_TIMER_MHZ 20U
+#define DIR_IN 0x00
+#define DIR_OUT 0x03
+#define GPIO_MODE_IN_AN 0x00
+#define GPIO_MODE_OUT_PP 0x00
+#define GPIO_MODE_OUT_AF_PP 0x02
+#define GPIO_SPEED_VERY_HIGH 0x03
+#define GPIO_PULL_NONE 0x00
+#define IO_CONFIG(dir, mode, speed, pupd) ((dir) | ((mode) << 2) | ((speed) << 4) | ((pupd) << 6))
+#define IOCFG_OUT_PP IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
+#define IOCFG_AF_PP IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
+#define CAMERA_CONTROL_IO_ANALOG_CFG IO_CONFIG(DIR_IN, GPIO_MODE_IN_AN, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
+#define IO_NONE NULL
+#define OWNER_CAMERA_CONTROL 20
+#define NVIC_PRIO_TIMER 0x50
+#define NVIC_PRIO_MAX 0x10
+#define ENABLE 1
+#define DISABLE 0
+#define TIM6_IRQn 100
+#define TIM7_IRQn 101
+#define RCC_HB1Periph_TIM6 0x10U
+#define RCC_HB1Periph_TIM7 0x20U
+#define RCC_HB1Periph_DAC 0x20000000U
+#define RCC_HB1(periph) RCC_HB1Periph_##periph
+#define TIM_CEN 0x0001U
+#define TIM_IT_Update 0x0001U
+#define TIM_PSCReloadMode_Immediate 0x0001U
+#define DAC_Channel_1 0x00U
+#define DAC_Channel_2 0x10U
+#define DAC_Trigger_None 0U
+#define DAC_WaveGeneration_None 0U
+#define DAC_OutputBuffer_Enable 0U
+#define DAC_EN1 0x0001U
+#define ATOMIC_BLOCK(p) for (int _once = ((void)(p), 1); _once; _once = 0)
+#define DEFIO_TAG_E(pin) TAG_##pin
+enum { TAG_NONE = 0, TAG_PA4 = 1, TAG_PA5 = 0, TAG_PB8 = 2 };
+
+typedef int ioTag_t;
+typedef void *IO_t;
+typedef uint32_t timeMs_t;
+typedef enum {
+    CAMERA_CONTROL_KEY_ENTER,
+    CAMERA_CONTROL_KEY_LEFT,
+    CAMERA_CONTROL_KEY_UP,
+    CAMERA_CONTROL_KEY_RIGHT,
+    CAMERA_CONTROL_KEY_DOWN,
+    CAMERA_CONTROL_KEYS_COUNT
+} cameraControlKey_e;
+typedef enum {
+    CAMERA_CONTROL_MODE_HARDWARE_PWM,
+    CAMERA_CONTROL_MODE_SOFTWARE_PWM,
+    CAMERA_CONTROL_MODE_DAC,
+    CAMERA_CONTROL_MODES_COUNT
+} cameraControlMode_e;
+typedef struct {
+    bool enabled;
+    IO_t io;
+    uint32_t period;
+    uint8_t inverted;
+    timeMs_t endTimeMillis;
+} cameraControlRuntime_t;
+typedef struct {
+    cameraControlMode_e mode;
+    uint16_t refVoltage;
+    uint16_t keyDelayMs;
+    uint16_t internalResistance;
+    ioTag_t ioTag;
+    uint8_t inverted;
+    uint16_t buttonResistanceValues[CAMERA_CONTROL_KEYS_COUNT];
+} cameraControlConfig_t;
+typedef struct {
+    uint16_t CTLR1;
+    uint16_t DMAINTENR;
+    uint16_t INTFR;
+    uint16_t SWEVGR;
+    uint16_t CNT;
+    uint16_t PSC;
+    uint16_t ATRLR;
+    uint16_t swevgrCount;
+} TIM_TypeDef;
+typedef TIM_TypeDef timerResource_t;
+typedef struct {
+    TIM_TypeDef *tim;
+    uint8_t alternateFunction;
+} timerHardware_t;
+typedef struct {
+    uint32_t *ccr;
+} timerChannel_t;
+typedef struct {
+    uint32_t HB1ENR;
+} RCC_TypeDef;
+typedef struct {
+    uint32_t CTLR;
+    uint32_t R12BDHR1;
+    uint32_t R12BDHR2;
+} DAC_TypeDef;
+typedef struct {
+    uint32_t DAC_Trigger;
+    uint32_t DAC_WaveGeneration;
+    uint32_t DAC_OutputBuffer;
+} DAC_InitTypeDef;
+
+static TIM_TypeDef tim6_inst, tim7_inst, tim3_inst;
+static RCC_TypeDef rcc_inst;
+static DAC_TypeDef dac_inst;
+#define TIM6 (&tim6_inst)
+#define TIM7 (&tim7_inst)
+#define RCC (&rcc_inst)
+#define DAC (&dac_inst)
+
+static int pa4Obj, pb8Obj;
+static cameraControlConfig_t cfg;
+static const cameraControlConfig_t *cameraControlConfig(void) { return &cfg; }
+static cameraControlRuntime_t *cameraControlRuntime;
+static cameraControlMode_e activeMode = CAMERA_CONTROL_MODES_COUNT;
+static timerChannel_t channel;
+static uint32_t activeDacChannel;
+static const timerHardware_t *allocTim;
+static uint32_t hwCcr;
+static int pinLevel = -1;
+static int pinLevelAtOutPpSwitch = -1;
+static uint32_t dacCodeAtEnable = 0xFFFFFFFFU;
+static uint32_t lastIoCfg;
+static timeMs_t fakeNowMs = 1000;
+
+static timeMs_t millis(void) { return fakeNowMs; }
+static IO_t IOGetByTag(ioTag_t tag) {
+    if (tag == TAG_PA4) return &pa4Obj;
+    if (tag == TAG_PB8) return &pb8Obj;
+    return IO_NONE;
+}
+static void IOHi(IO_t io) { (void)io; pinLevel = 1; }
+static void IOLo(IO_t io) { (void)io; pinLevel = 0; }
+static void IOConfigGPIO(IO_t io, uint32_t c) {
+    (void)io;
+    if (c == IOCFG_OUT_PP) pinLevelAtOutPpSwitch = pinLevel;
+    lastIoCfg = c;
+}
+static void IOConfigGPIOAF(IO_t io, uint32_t c, uint8_t af) { (void)io; (void)af; lastIoCfg = c; }
+static const timerHardware_t *timerAllocate(ioTag_t tag, int owner, int idx) { (void)tag; (void)owner; (void)idx; return allocTim; }
+static uint32_t timerClock(const timerHardware_t *hw) { (void)hw; return 400000000U; }
+static void pwmOutputConfig(timerChannel_t *ch, const timerHardware_t *hw, uint32_t hz, uint16_t period, uint16_t val, uint8_t inv) {
+    (void)hw; (void)hz; (void)period; (void)inv;
+    ch->ccr = &hwCcr;
+    hwCcr = val;
+}
+static uint32_t HCLKClock = 400000000U;
+static uint32_t timerClockFromInstance(const timerResource_t *t) { (void)t; return HCLKClock; }
+#define MHZ_TO_HZ(x) ((x) * 1000000U)
+static uint16_t timerGetPrescalerByDesiredHertz(timerResource_t *t, uint32_t hz);
+''' + fn('src/platform/CH32/timer_ch32bsp.c', 'uint16_t timerGetPrescalerByDesiredMhz(')
+    + fn('src/platform/CH32/timer_ch32bsp.c', 'uint16_t timerGetPrescalerByDesiredHertz(') + '''
+static void NVIC_SetPriority(int irq, uint32_t prio) { (void)irq; (void)prio; }
+static void NVIC_EnableIRQ(int irq) { (void)irq; }
+static void RCC_ClockCmd(uint32_t mask, int state) { if (state) RCC->HB1ENR |= mask; else RCC->HB1ENR &= ~mask; }
+static void DAC_StructInit(DAC_InitTypeDef *s) { memset(s, 0, sizeof(*s)); }
+static void DAC_Init(uint32_t ch, DAC_InitTypeDef *s) { (void)ch; (void)s; }
+static void DAC_Cmd(uint32_t ch, int state) {
+    if (state) {
+        dacCodeAtEnable = (ch == DAC_Channel_1) ? DAC->R12BDHR1 : DAC->R12BDHR2;
+        DAC->CTLR |= (DAC_EN1 << ch);
+    } else {
+        DAC->CTLR &= ~(DAC_EN1 << ch);
+    }
+}
+''' + fn('src/platform/CH32/camera_control_ch32.c', 'static float calculateKeyPressVoltage(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static float calculateKeyPressRatio(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static bool cameraControlHardwarePwmTryInit(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static void cameraControlHi(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static void cameraControlLo(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'void TIM6_IRQHandler(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'void TIM7_IRQHandler(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static void cameraControlSoftwarePwmDisable(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static void cameraControlSoftwarePwmEnable(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static bool cameraControlSoftwarePwmTryInit(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static bool cameraControlResolveDacChannel(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static void cameraControlDacWriteCode(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static bool cameraControlDacTryInit(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'void cameraControlInitImpl(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'void cameraControlProcessImpl(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'void cameraControlKeyPressImpl(') + '''
+int main(void) {
+    cfg = (cameraControlConfig_t){
+        .mode = CAMERA_CONTROL_MODE_HARDWARE_PWM,
+        .refVoltage = 330,
+        .keyDelayMs = 180,
+        .internalResistance = 470,
+        .ioTag = TAG_PA4,
+        .inverted = 0,
+        .buttonResistanceValues = { 450, 270, 150, 68, 0 },
+    };
+
+    /* 1. RATE_H4_RACING PA4: TIM10 owned by TheiaOSD (timerAllocate -> NULL) falls back to 12-bit DAC1 */
+    allocTim = NULL;
+    cameraControlRuntime_t rt = { .io = &pa4Obj, .inverted = 0 };
+    cameraControlInitImpl(&rt);
+    if (!rt.enabled || activeMode != CAMERA_CONTROL_MODE_DAC || (RCC->HB1ENR & RCC_HB1Periph_DAC) == 0) return 1;
+    if (lastIoCfg != IOCFG_OUT_PP || pinLevel != 1 || pinLevelAtOutPpSwitch != 1 || (DAC->CTLR & DAC_EN1) != 0) return 2;
+
+    const uint16_t expectedCodes[4] = { 2003, 1494, 991, 518 };
+    for (int k = 0; k < 4; k++) {
+        cameraControlKeyPressImpl((cameraControlKey_e)k, 200);
+        if (lastIoCfg != CAMERA_CONTROL_IO_ANALOG_CFG || (DAC->CTLR & DAC_EN1) == 0) return 3;
+        if (DAC->R12BDHR1 != expectedCodes[k] || dacCodeAtEnable != expectedCodes[k]) return 4;
+        if (rt.endTimeMillis != 1380) return 5;
+    }
+
+    /* DOWN (0 ohm) drives rail-to-rail CMOS Low and powers down DAC1; ProcessImpl restores glitch-free CMOS High */
+    cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_DOWN, 0);
+    if (lastIoCfg != IOCFG_OUT_PP || pinLevel != 0 || pinLevelAtOutPpSwitch != 0 || (DAC->CTLR & DAC_EN1) != 0) return 6;
+    cameraControlProcessImpl();
+    if (lastIoCfg != IOCFG_OUT_PP || pinLevel != 1 || pinLevelAtOutPpSwitch != 1 || (DAC->CTLR & DAC_EN1) != 0) return 7;
+
+    /* Inverted DAC mode mirrors idle/rail polarity and mid-scale codes */
+    rt.inverted = 1;
+    cameraControlInitImpl(&rt);
+    if (pinLevel != 0 || (DAC->CTLR & DAC_EN1) != 0) return 8;
+    cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_ENTER, 0);
+    if (DAC->R12BDHR1 != (4095 - 2003) || lastIoCfg != CAMERA_CONTROL_IO_ANALOG_CFG) return 9;
+    cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_DOWN, 0);
+    if (pinLevel != 1 || lastIoCfg != IOCFG_OUT_PP || (DAC->CTLR & DAC_EN1) != 0) return 10;
+
+    /* 2. Non-DAC pin without free timer falls back to non-blocking 20 MHz TIM6+TIM7 SOFTWARE_PWM */
+    cfg.ioTag = TAG_PB8;
+    rt = (cameraControlRuntime_t){ .io = &pb8Obj, .inverted = 0 };
+    cameraControlInitImpl(&rt);
+    if (!rt.enabled || activeMode != CAMERA_CONTROL_MODE_SOFTWARE_PWM) return 11;
+    if (TIM6->PSC != 19 || TIM7->PSC != 19 || TIM6->SWEVGR != TIM_PSCReloadMode_Immediate || TIM7->SWEVGR != TIM_PSCReloadMode_Immediate) return 12;
+    if (pinLevel != 1 || lastIoCfg != IOCFG_OUT_PP) return 13;
+
+    cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_ENTER, 2000);
+    if (TIM6->CNT != 219 || TIM6->ATRLR != 448 || TIM7->CNT != 0 || TIM7->ATRLR != 448) return 14;
+    if (TIM6->CTLR1 != TIM_CEN || TIM7->CTLR1 != TIM_CEN || TIM6->DMAINTENR != TIM_IT_Update || TIM7->DMAINTENR != TIM_IT_Update) return 15;
+    if (rt.endTimeMillis != 3180) return 16;
+
+    TIM6->INTFR = TIM_IT_Update;
+    TIM6_IRQHandler();
+    if (pinLevel != 1 || TIM6->INTFR != 0) return 17;
+    TIM7->INTFR = TIM_IT_Update;
+    TIM7_IRQHandler();
+    if (pinLevel != 0 || TIM7->INTFR != 0) return 18;
+
+    cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_DOWN, 0);
+    if ((TIM6->CTLR1 & TIM_CEN) != 0 || (TIM7->CTLR1 & TIM_CEN) != 0 || pinLevel != 0) return 19;
+    cameraControlProcessImpl();
+    if ((TIM6->CTLR1 & TIM_CEN) != 0 || TIM6->DMAINTENR != 0 || pinLevel != 1) return 20;
+
+    /* 3. Pin with available hardware timer uses HARDWARE_PWM directly */
+    timerHardware_t hw = { .tim = &tim3_inst, .alternateFunction = 2 };
+    allocTim = &hw;
+    cameraControlInitImpl(&rt);
+    if (!rt.enabled || activeMode != CAMERA_CONTROL_MODE_HARDWARE_PWM || hwCcr != 128) return 21;
+    cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_ENTER, 0);
+    if (hwCcr != 63 || rt.endTimeMillis != 1180) return 22;
+    cameraControlProcessImpl();
+    if (hwCcr != 128) return 23;
+
+    puts("CH32H4 camera control supports HARDWARE_PWM, 12-bit DAC, and non-blocking 20 MHz SOFTWARE_PWM with automatic fallback");
+}
+''', extra_flags=('-lm',))
