@@ -118,6 +118,11 @@
 // #undef USE_DSHOT_BITBANG
 #define USE_BEEPER
 
+#ifndef CLOUD_BUILD
+#define USE_LED_STRIP
+#define USE_LED_STRIP_STATUS_MODE
+#endif
+
 // #define USE_VTX
 #define USE_OSD
 #define USE_OSD_HD

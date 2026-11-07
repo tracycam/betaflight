@@ -52,17 +52,17 @@ SECTIONS
 		/* Prioritize placing code in ITCM area */
 		obj/main/CH32H415*/flight/*.o(.text .text.*)
 		obj/main/CH32H415*/fc/*.o(.text .text.*)
-		/* Display, camera-menu and VTX configuration protocols run in
-         * cooperative tasks. Their UART peripheral/IRQ drivers stay in
-         * ITCM; GPS, RC input, motor and scheduler paths also stay here.
-         * CMS/CLI/OSD code already falls through to SRAM below. */
-        obj/main/CH32H415*/io/*.o(EXCLUDE_FILE (*displayport*.o *rcdevice*.o *vtx*.o *smartaudio_protocol.o *tramp_protocol.o) .text*)
+		/* Display, camera-menu, LED animation, SD FAT and VTX configuration
+         * protocols run in cooperative tasks. Their peripheral/IRQ/DMA
+         * drivers stay in ITCM; GPS, RC input, motor and scheduler paths
+         * also stay here. CMS/CLI/OSD code falls through to SRAM below. */
+        obj/main/CH32H415*/io/*.o(EXCLUDE_FILE (*displayport*.o *rcdevice*.o *vtx*.o *smartaudio_protocol.o *tramp_protocol.o *ledstrip*.o *asyncfatfs*.o *fat_standard*.o) .text*)
 		obj/main/CH32H415*/config/*.o(.text .text.*)
 		obj/main/CH32H415*/pg/*.o(.text .text.*)
 		obj/main/CH32H415*/build/*.o(.text .text.*)
 		obj/main/CH32H415*/common/*.o(.text .text.*)
 		obj/main/CH32H415*/common/stm32/*.o(.text .text.*)
-		obj/main/CH32H415*/drivers/*.o(.text .text.*)
+		obj/main/CH32H415*/drivers/*.o(EXCLUDE_FILE (*serial_escserial.o) .text .text.*)
 		obj/main/CH32H415*/drivers/accgyro/*.o(.text .text.*)
 		obj/main/CH32H415*/drivers/barometer/*.o(.text .text.*)
 		obj/main/CH32H415*/drivers/compass/*.o(.text .text.*)

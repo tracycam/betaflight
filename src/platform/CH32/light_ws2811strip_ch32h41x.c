@@ -46,6 +46,11 @@ static IO_t ws2811IO = IO_NONE;
 static dmaResource_t *dmaRef = NULL;
 static TIM_TypeDef *timer = NULL;
 
+static inline bool isWs2811Timer32Bit(const TIM_TypeDef *tim)
+{
+    return tim == TIM9 || tim == TIM10 || tim == TIM11 || tim == TIM12;
+}
+
 static void WS2811_DMA_IRQHandler(dmaChannelDescriptor_t *descriptor)
 {
 #if defined(USE_WS2811_SINGLE_COLOUR)
@@ -58,17 +63,22 @@ static void WS2811_DMA_IRQHandler(dmaChannelDescriptor_t *descriptor)
         if (counter == WS2811_LED_STRIP_LENGTH) {
             // Output low for 50us delay
             memset(ledStripDMABuffer, 0, sizeof(ledStripDMABuffer));
+            DMA_CLEAR_FLAG(descriptor, DMA_IT_TCIF);
         } else if (counter == (WS2811_LED_STRIP_LENGTH + WS2811_DELAY_ITERATIONS)) {
             counter = 0;
-            ws2811LedDataTransferInProgress = false;
             xDMA_Cmd(descriptor->ref, DISABLE);
+            DMA_CLEAR_FLAG(descriptor, DMA_IT_TCIF);
+            ch32DmaBarrier();
+            ws2811LedDataTransferInProgress = false;
+        } else {
+            DMA_CLEAR_FLAG(descriptor, DMA_IT_TCIF);
         }
 #else
-        ws2811LedDataTransferInProgress = false;
         xDMA_Cmd(descriptor->ref, DISABLE);
-#endif
-
         DMA_CLEAR_FLAG(descriptor, DMA_IT_TCIF);
+        ch32DmaBarrier();
+        ws2811LedDataTransferInProgress = false;
+#endif
     }
 }
 
@@ -121,6 +131,9 @@ bool ws2811LedStripHardwareInit(void)
     /* Compute the prescaler value */
     uint16_t prescaler = timerGetPrescalerByDesiredMhz(timerHardware->tim, WS2811_TIMER_MHZ);
     uint16_t period = timerGetPeriodByPrescaler(timerHardware->tim, prescaler, WS2811_CARRIER_HZ);
+    if (period == 0) {
+        return false;
+    }
 
     BIT_COMPARE_1 = period / 3 * 2;
     BIT_COMPARE_0 = period / 3;
@@ -168,8 +181,6 @@ bool ws2811LedStripHardwareInit(void)
     dmaEnable(dmaGetIdentifier(dmaRef));
     dmaSetHandler(dmaGetIdentifier(dmaRef), WS2811_DMA_IRQHandler, NVIC_PRIO_WS2811_DMA, 0);
 
-    xDMA_DeInit(dmaRef);
-
     /* configure DMA */
     xDMA_Cmd(dmaRef, DISABLE);
     xDMA_DeInit(dmaRef);
@@ -181,7 +192,9 @@ bool ws2811LedStripHardwareInit(void)
 
     DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)ledStripDMABuffer;
     DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralDST;
-    DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_Word;
+    DMA_InitStructure.DMA_PeripheralDataSize = isWs2811Timer32Bit(timer)
+        ? DMA_PeripheralDataSize_Word
+        : DMA_PeripheralDataSize_HalfWord;
     DMA_InitStructure.DMA_MemoryDataSize = DMA_MemoryDataSize_Word;
     DMA_InitStructure.DMA_Priority = DMA_Priority_VeryHigh;
     DMA_InitStructure.DMA_M2M = DMA_M2M_Disable;

@@ -2484,3 +2484,154 @@ int main(void) {
     puts("MSC survives async USB reset during sector I/O, guards 32-bit LBA overflow, and serves dynamic INQUIRY");
 }
 ''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/class/msc'), '-I' + str(root / 'src/platform/CH32/include')))
+
+run('ws2811_ledstrip_dma_and_isr', '''
+#define USE_DMA_SPEC
+#define WS2811_TIMER_MHZ 48
+#define WS2811_CARRIER_HZ 800000
+#define WS2811_DMA_BUFFER_SIZE 106
+#define TIMER_OUTPUT_N_CHANNEL 0x02
+#define TIMER_OUTPUT_INVERTED  0x01
+#define DIR_OUT 3
+#define GPIO_MODE_OUT_AF_PP 2
+#define GPIO_SPEED_VERY_HIGH 3
+#define GPIO_PULL_UP 2
+#define IO_CONFIG(d,m,s,p) ((d)|((m)<<2)|((s)<<4)|((p)<<6))
+#define IO_NONE NULL
+#define OWNER_LED_STRIP 9
+#define NVIC_PRIO_WS2811_DMA 0x60
+#define ENABLE 1
+#define DISABLE 0
+#define TIM_CKD_DIV1 0
+#define TIM_CounterMode_Up 0
+#define TIM_OCMode_PWM1 6
+#define TIM_OutputNState_Enable 4
+#define TIM_OCNIdleState_Reset 0
+#define TIM_OCNPolarity_Low 8
+#define TIM_OCNPolarity_High 0
+#define TIM_OutputState_Enable 1
+#define TIM_OCIdleState_Set 0x100
+#define TIM_OCPolarity_Low 2
+#define TIM_OCPolarity_High 0
+#define TIM_OCPreload_Enable 8
+#define TIM_CCxN_Enable 4
+#define TIM_CCx_Enable 1
+#define DMA_PeripheralInc_Disable 0
+#define DMA_MemoryInc_Enable 1
+#define DMA_DIR_PeripheralDST 1
+#define DMA_PeripheralDataSize_HalfWord 0x100
+#define DMA_PeripheralDataSize_Word 0x200
+#define DMA_MemoryDataSize_Word 0x800
+#define DMA_Priority_VeryHigh 0x3000
+#define DMA_M2M_Disable 0
+#define DMA_Mode_Normal 0
+#define DMA_IT_TC 2
+#define DMA_IT_TCIF 2
+typedef int ioTag_t;
+typedef void *IO_t;
+typedef struct { int id; } dmaResource_t;
+typedef struct { int dummy; } TIM_TypeDef;
+typedef TIM_TypeDef timerResource_t;
+static TIM_TypeDef tim4_inst, tim9_inst, tim10_inst, tim11_inst, tim12_inst;
+#define TIM4 (&tim4_inst)
+#define TIM9 (&tim9_inst)
+#define TIM10 (&tim10_inst)
+#define TIM11 (&tim11_inst)
+#define TIM12 (&tim12_inst)
+typedef struct { TIM_TypeDef *tim; uint8_t channel; uint8_t output; uint8_t alternateFunction; } timerHardware_t;
+typedef struct { dmaResource_t *ref; uint32_t dmaMuxId; } dmaChannelSpec_t;
+typedef struct dmaChannelDescriptor_s { dmaResource_t *ref; uint32_t flags; } dmaChannelDescriptor_t;
+typedef void (*dmaCallbackHandlerFuncPtr)(dmaChannelDescriptor_t *);
+typedef struct { uint32_t TIM_Period; uint16_t TIM_Prescaler; uint16_t TIM_ClockDivision; uint16_t TIM_CounterMode; } TIM_TimeBaseInitTypeDef;
+typedef struct { uint16_t TIM_OCMode; uint16_t TIM_OutputState; uint16_t TIM_OutputNState; uint32_t TIM_Pulse; uint16_t TIM_OCPolarity; uint16_t TIM_OCNPolarity; uint16_t TIM_OCIdleState; uint16_t TIM_OCNIdleState; } TIM_OCInitTypeDef;
+typedef struct { uint32_t DMA_PeripheralBaseAddr; uint32_t DMA_Memory0BaseAddr; uint32_t DMA_DIR; uint32_t DMA_BufferSize; uint32_t DMA_PeripheralInc; uint32_t DMA_MemoryInc; uint32_t DMA_PeripheralDataSize; uint32_t DMA_MemoryDataSize; uint32_t DMA_Mode; uint32_t DMA_Priority; uint32_t DMA_M2M; } DMA_InitTypeDef;
+
+static ioTag_t ledStripIoTag = 1;
+static uint32_t ledStripDMABuffer[WS2811_DMA_BUFFER_SIZE];
+static uint16_t BIT_COMPARE_1, BIT_COMPARE_0;
+static volatile bool ws2811LedDataTransferInProgress;
+static IO_t ws2811IO = IO_NONE;
+static dmaResource_t fakeDma = { .id = 6 };
+static dmaResource_t *dmaRef = NULL;
+static TIM_TypeDef *timer = NULL;
+static timerHardware_t activeHw;
+static dmaChannelSpec_t activeSpec = { .ref = &fakeDma, .dmaMuxId = 45 };
+static DMA_InitTypeDef lastDmaInit;
+static TIM_TimeBaseInitTypeDef lastTimBase;
+static uint32_t lastMuxId;
+static int dmaEnabledState = -1;
+static int stateWhenReadyCleared = -1;
+static dmaCallbackHandlerFuncPtr registeredHandler;
+static uint32_t fakeCcr;
+static int fakeIoObj;
+
+static uint32_t HCLKClock = 400000000U;
+static uint32_t timerClockFromInstance(const timerResource_t *t) { (void)t; return HCLKClock; }
+#define MHZ_TO_HZ(x) ((x) * 1000000U)
+static uint16_t timerGetPrescalerByDesiredHertz(timerResource_t *t, uint32_t hz);
+''' + fn('src/platform/CH32/timer_ch32bsp.c', 'uint16_t timerGetPrescalerByDesiredMhz(')
+    + fn('src/platform/CH32/timer_ch32bsp.c', 'uint16_t timerGetPeriodByPrescaler(')
+    + fn('src/platform/CH32/timer_ch32bsp.c', 'uint16_t timerGetPrescalerByDesiredHertz(') + '''
+static const timerHardware_t *timerAllocate(ioTag_t tag, int owner, int idx) { (void)tag; (void)owner; (void)idx; return &activeHw; }
+static const dmaChannelSpec_t *dmaGetChannelSpecByTimer(const timerHardware_t *hw) { (void)hw; return &activeSpec; }
+static int dmaGetIdentifier(const dmaResource_t *r) { return r ? r->id : 0; }
+static bool dmaAllocate(int id, int owner, int idx) { (void)owner; (void)idx; return id == 6; }
+static IO_t IOGetByTag(ioTag_t tag) { return tag ? &fakeIoObj : NULL; }
+static void IOInit(IO_t io, int owner, int idx) { (void)io; (void)owner; (void)idx; }
+static void IOConfigGPIOAF(IO_t io, uint32_t cfg, uint8_t af) { (void)io; (void)cfg; (void)af; }
+static int timerRCC(const TIM_TypeDef *t) { (void)t; return 1; }
+static void RCC_ClockCmd(int rcc, int cmd) { (void)rcc; (void)cmd; }
+static void TIM_Cmd(TIM_TypeDef *t, int cmd) { (void)t; (void)cmd; }
+static void TIM_TimeBaseStructInit(TIM_TimeBaseInitTypeDef *s) { memset(s, 0, sizeof(*s)); }
+static void TIM_TimeBaseInit(TIM_TypeDef *t, TIM_TimeBaseInitTypeDef *s) { (void)t; lastTimBase = *s; }
+static void TIM_OCStructInit(TIM_OCInitTypeDef *s) { memset(s, 0, sizeof(*s)); }
+static void timerOCInit(TIM_TypeDef *t, uint8_t ch, TIM_OCInitTypeDef *s) { (void)t; (void)ch; (void)s; }
+static void timerOCPreloadConfig(TIM_TypeDef *t, uint8_t ch, uint16_t p) { (void)t; (void)ch; (void)p; }
+static void TIM_CtrlPWMOutputs(TIM_TypeDef *t, int cmd) { (void)t; (void)cmd; }
+static void TIM_ARRPreloadConfig(TIM_TypeDef *t, int cmd) { (void)t; (void)cmd; }
+static void TIM_CCxNCmd(TIM_TypeDef *t, uint8_t ch, uint16_t cmd) { (void)t; (void)ch; (void)cmd; }
+static void TIM_CCxCmd(TIM_TypeDef *t, uint8_t ch, uint16_t cmd) { (void)t; (void)ch; (void)cmd; }
+static void dmaEnable(int id) { (void)id; }
+static void dmaSetHandler(int id, dmaCallbackHandlerFuncPtr cb, uint32_t prio, uint32_t user) { (void)id; (void)prio; (void)user; registeredHandler = cb; }
+static void xDMA_Cmd(dmaResource_t *r, int cmd) { (void)r; dmaEnabledState = cmd; }
+static void xDMA_DeInit(dmaResource_t *r) { (void)r; }
+static void DMA_StructInit(DMA_InitTypeDef *s) { memset(s, 0, sizeof(*s)); }
+static uint32_t *timerCCR(TIM_TypeDef *t, uint8_t ch) { (void)t; (void)ch; return &fakeCcr; }
+static void xDMA_Init(dmaResource_t *r, DMA_InitTypeDef *s) { (void)r; lastDmaInit = *s; }
+static void dmaMuxEnable(int id, uint32_t mux) { (void)id; lastMuxId = mux; }
+static uint16_t timerDmaSource(uint8_t ch) { return (uint16_t)(1u << ch); }
+static void TIM_DMACmd(TIM_TypeDef *t, uint16_t src, int cmd) { (void)t; (void)src; (void)cmd; }
+static void xDMA_ITConfig(dmaResource_t *r, uint32_t it, int cmd) { (void)r; (void)it; (void)cmd; }
+static void xDMA_SetCurrDataCounter(dmaResource_t *r, uint16_t cnt) { (void)r; (void)cnt; }
+static void TIM_SetCounter(TIM_TypeDef *t, uint32_t cnt) { (void)t; (void)cnt; }
+static void ch32DmaBarrier(void) { stateWhenReadyCleared = dmaEnabledState; }
+#define DMA_GET_FLAG_STATUS(d, f) (((d)->flags & (f)) != 0)
+#define DMA_CLEAR_FLAG(d, f) ((d)->flags &= ~(uint32_t)(f))
+''' + fn('src/platform/CH32/light_ws2811strip_ch32h41x.c', 'static inline bool isWs2811Timer32Bit(')
+    + fn('src/platform/CH32/light_ws2811strip_ch32h41x.c', 'static void WS2811_DMA_IRQHandler(')
+    + fn('src/platform/CH32/light_ws2811strip_ch32h41x.c', 'bool ws2811LedStripHardwareInit(')
+    + fn('src/platform/CH32/light_ws2811strip_ch32h41x.c', 'void ws2811LedStripStartTransfer(') + '''
+int main(void) {
+    /* 1. 16-bit TIM4 (RATE_H4_RACING PB6) uses HalfWord peripheral width and 50 MHz / 800 kHz = 62 ticks (ARR=61) */
+    activeHw = (timerHardware_t){ .tim = TIM4, .channel = 0, .output = 0, .alternateFunction = 2 };
+    if (!ws2811LedStripHardwareInit()) return 1;
+    if (lastTimBase.TIM_Prescaler != 7 || lastTimBase.TIM_Period != 61) return 2;
+    if (BIT_COMPARE_0 != 20 || BIT_COMPARE_1 != 40) return 3;
+    if (lastDmaInit.DMA_PeripheralDataSize != DMA_PeripheralDataSize_HalfWord || lastDmaInit.DMA_MemoryDataSize != DMA_MemoryDataSize_Word) return 4;
+    if (lastMuxId != 45 || !registeredHandler) return 5;
+
+    /* 2. Start transfer enables DMA, and TC ISR disables DMA + barriers BEFORE clearing ws2811LedDataTransferInProgress */
+    ws2811LedDataTransferInProgress = true;
+    ws2811LedStripStartTransfer();
+    if (dmaEnabledState != ENABLE) return 6;
+    dmaChannelDescriptor_t desc = { .ref = &fakeDma, .flags = DMA_IT_TCIF };
+    registeredHandler(&desc);
+    if (ws2811LedDataTransferInProgress || dmaEnabledState != DISABLE || stateWhenReadyCleared != DISABLE || desc.flags != 0) return 7;
+
+    /* 3. 32-bit TIM9 uses Word peripheral width for CHxCVR_32 */
+    activeHw.tim = TIM9;
+    if (!ws2811LedStripHardwareInit()) return 8;
+    if (lastDmaInit.DMA_PeripheralDataSize != DMA_PeripheralDataSize_Word) return 9;
+    puts("WS2811 LED strip selects 16/32-bit CCR width, exact 800 kHz timing, and race-free DMA completion");
+}
+''')
