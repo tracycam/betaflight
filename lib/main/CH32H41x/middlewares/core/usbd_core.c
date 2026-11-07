@@ -3,6 +3,10 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "platform.h"
+
+#if defined(USE_VCP) || defined(USE_USB_MSC)
+
 #include "usbd_core.h"
 #ifdef CONFIG_USBDEV_EP0_THREAD
 #include "usb_osal.h"
@@ -827,6 +831,9 @@ static bool usbd_std_endpoint_req_handler(uint8_t busid,
       USB_LOG_ERR("ep:%02x clear halt\r\n", ep);
 
       usbd_ep_clear_stall(busid, ep);
+      usbd_class_event_notify_handler(busid, USBD_EVENT_CLEAR_HALT,
+                                      (void *)(uintptr_t)ep);
+      *len = 0;
       break;
     } else {
       ret = false;
@@ -1666,3 +1673,5 @@ int usbd_deinitialize(uint8_t busid) {
 
   return 0;
 }
+
+#endif /* defined(USE_VCP) || defined(USE_USB_MSC) */
