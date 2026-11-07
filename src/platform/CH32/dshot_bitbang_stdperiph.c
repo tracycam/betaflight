@@ -112,8 +112,6 @@ void bbTimerChannelInit(bbPort_t *bbPort)
 
     timerOCInit((TIM_TypeDef *)timhw->tim, timhw->channel, &TIM_OCStruct);
 
-    // timerOCPreloadConfig(timhw->tim, timhw->channel, TIM_OCPreload_Enable);
-
 #ifdef DEBUG_MONITOR_PACER
     if (timhw->tag) {
         IO_t io = IOGetByTag(timhw->tag);
@@ -188,9 +186,7 @@ bool bbSwitchToOutput(bbPort_t *bbPort)
 #ifdef USE_DMA_REGISTER_CACHE
     bbLoadDMARegs(dmaResource, &bbPort->dmaRegOutput);
 #else
-    // xDMA_DeInit(dmaResource);
     xDMA_Init(dmaResource, &bbPort->outputDmaInit);
-    // Needs this, as it is DeInit'ed above...
     xDMA_ITConfig(dmaResource, DMA_IT_TC | DMA_IT_TE, ENABLE);
 #endif
 
@@ -228,9 +224,7 @@ void bbSwitchToInput(bbPort_t *bbPort)
 #ifdef USE_DMA_REGISTER_CACHE
     bbLoadDMARegs(dmaResource, &bbPort->dmaRegInput);
 #else
-    // xDMA_DeInit(dmaResource);
     xDMA_Init(dmaResource, &bbPort->inputDmaInit);
-    // Needs this, as it is DeInit'ed above...
     xDMA_ITConfig(dmaResource, DMA_IT_TC | DMA_IT_TE, ENABLE);
 #endif
 
@@ -249,20 +243,9 @@ void bbDMAPreconfigure(bbPort_t *bbPort, uint8_t direction)
 
     DMA_StructInit(dmainit);
 
-    // dmainit->DMA_Mode = DMA_Mode_Normal;
-    // dmainit->DMA_Channel = bbPort->dmaChannel;
-    // dmainit->DMA_PeripheralInc = DMA_PeripheralInc_Disable;
-    // dmainit->DMA_MemoryInc = DMA_MemoryInc_Enable;
-    // dmainit->DMA_FIFOMode = DMA_FIFOMode_Enable ;
-    // dmainit->DMA_FIFOThreshold = DMA_FIFOThreshold_1QuarterFull ;
-    // dmainit->DMA_MemoryBurst = DMA_MemoryBurst_Single ;
-    // dmainit->DMA_PeripheralBurst = DMA_PeripheralBurst_Single;
-
     dmainit->DMA_Mode = DMA_Mode_Normal;
     dmainit->DMA_PeripheralInc = DMA_PeripheralInc_Disable;
     dmainit->DMA_MemoryInc = DMA_MemoryInc_Enable;
-
-
 
     if (direction == DSHOT_BITBANG_DIRECTION_OUTPUT) {
         dmainit->DMA_Priority = DMA_Priority_VeryHigh;
@@ -345,4 +328,4 @@ int bbDMA_Count(bbPort_t *bbPort)
 {
     return xDMA_GetCurrDataCounter(bbPort->dmaResource);
 }
-#endif // USE_DSHOT_BB
+#endif // USE_DSHOT_BITBANG

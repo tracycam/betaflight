@@ -658,11 +658,6 @@ static void bbWriteInt(uint8_t motorIndex, uint16_t value)
         return;
     }
 
-    //     // fetch requestTelemetry from motors. Needs to be refactored.
-    // motorDmaOutput_t * const motor = getMotorDmaOutput(motorIndex);
-    // bbmotor->protocolControl.requestTelemetry = motor->protocolControl.requestTelemetry;
-    // motor->protocolControl.requestTelemetry = false;
-
     // If there is a command ready to go overwrite the value and send that instead
     if (dshotCommandIsProcessing()) {
         value = dshotCommandGetCurrent(motorIndex);
@@ -900,4 +895,4 @@ bool dshotBitbangDevInit(motorDevice_t *device, const motorDevConfig_t *motorCon
 
     return true;
 }
-#endif // USE_DSHOT_BB
+#endif // USE_DSHOT_BITBANG

@@ -2962,3 +2962,152 @@ int main(void) {
     puts("CH32H4 camera control prefers 12-bit DAC -> HARDWARE_PWM -> 20 MHz SOFTWARE_PWM with simultaneous-IRQ & break-before-make safety");
 }
 ''', extra_flags=('-lm',))
+
+run('pwm_dshot_bidir_tcie_and_gpio_atomicity', '''
+#define USE_DSHOT_TELEMETRY
+#define FAST_CODE
+#define NVIC_PRIO_TIMER 0x50
+#define ENABLE 1
+#define DISABLE 0
+#define DMA_CFGR1_EN 0x0001U
+#define DMA_IT_TC 0x0002U
+#define DMA_IT_GLOB 0x0001U
+#define DMA_IT_TCIF 0x0002U
+#define DMA_IT_HTIF 0x0004U
+#define DMA_IT_TEIF 0x0008U
+#define DMA_DIR_PeripheralDST 1U
+#define DMA_DIR_PeripheralSRC 0U
+#define TIM_OCPreload_Disable 0U
+#define TIM_OCPreload_Enable 8U
+#define TIM_ARPE 0x0080U
+#define TIM_TS 0x0070U
+#define TIM_TS_TI1F_ED 0x0040U
+#define TIM_AUX_CAPCH234_ED 0x0007U
+#define GCR_TELEMETRY_INPUT_LEN 42U
+#define ATOMIC_BLOCK(p) for (int _once = ((void)(p), atomicEntries++, 1); _once; _once = 0)
+#define READ_REG(REG) (REG)
+#define WRITE_REG(REG, VAL) do { \
+    if ((void *)&(REG) == (void *)&gpioe.CFGLR) { \
+        regWriteCount++; \
+        if (((VAL) & 0xF000U) == 0U) sawTransientAin = 1; \
+    } \
+    (REG) = (VAL); \
+} while (0)
+#define MODIFY_REG(REG, CLEARMASK, SETMASK) WRITE_REG((REG), (((READ_REG(REG)) & (~(CLEARMASK))) | (SETMASK)))
+
+typedef int ioTag_t;
+typedef int dmaIdentifier_e;
+typedef void *IO_t;
+typedef struct { uint32_t CFGR; uint32_t CNTR; } DMA_Channel_TypeDef;
+typedef DMA_Channel_TypeDef DMA_ARCH_TYPE;
+typedef DMA_Channel_TypeDef dmaResource_t;
+typedef struct { uint32_t CFGLR; uint32_t CFGHR; uint32_t BSHR; } GPIO_TypeDef;
+typedef struct { uint16_t CTLR1; uint16_t DMAINTENR; uint16_t SMCFGR; uint16_t AUX; uint32_t ATRLR; } TIM_TypeDef;
+typedef struct { uint32_t DMA_DIR; } DMA_InitTypeDef;
+typedef struct { int dummy; } TIM_OCInitTypeDef;
+typedef struct { int dummy; } TIM_ICInitTypeDef;
+typedef struct { TIM_TypeDef *tim; uint8_t channel; ioTag_t tag; } timerHardware_t;
+typedef struct {
+    const timerHardware_t *timerHardware;
+    dmaResource_t *dmaRef;
+    uint16_t timerDmaSource;
+    bool isInput;
+    TIM_OCInitTypeDef ocInitStruct;
+    TIM_ICInitTypeDef icInitStruct;
+    DMA_InitTypeDef dmaInitStruct;
+} motorDmaOutput_t;
+typedef struct dmaChannelDescriptor_s {
+    dmaResource_t *ref;
+    uint32_t flags;
+    int irqN;
+    uint32_t userParam;
+} dmaChannelDescriptor_t;
+
+static TIM_TypeDef tim3_inst, tim9_inst, tim10_inst, tim11_inst, tim12_inst;
+#define TIM3 (&tim3_inst)
+#define TIM9 (&tim9_inst)
+#define TIM10 (&tim10_inst)
+#define TIM11 (&tim11_inst)
+#define TIM12 (&tim12_inst)
+
+static GPIO_TypeDef gpioe;
+static DMA_Channel_TypeDef dmaCh;
+static dmaChannelDescriptor_t dmaDesc = { .ref = &dmaCh, .flags = 0, .irqN = 47, .userParam = 0 };
+static motorDmaOutput_t dmaMotors[2];
+static bool useDshotTelemetry = true;
+static uint32_t inputStampUs;
+static struct { uint32_t irqAt; uint32_t changeDirectionCompletedAt; } dshotDMAHandlerCycleCounters;
+static unsigned atomicEntries, regWriteCount;
+static int sawTransientAin;
+static uint32_t flagsWhenOutputTcEnabled = 0xFFU;
+static int clearedIrqN = -1;
+
+static void ch32DmaBarrier(void) {}
+static uint32_t micros(void) { return 12345U; }
+static uint32_t getCycleCounter(void) { return 77U; }
+static IO_t IOGetByTag(ioTag_t tag) { return (IO_t)(uintptr_t)tag; }
+static GPIO_TypeDef *IO_GPIO(IO_t io) { (void)io; return &gpioe; }
+static uint16_t IO_Pin(IO_t io) { return (uint16_t)(1U << ((uintptr_t)io & 0xFU)); }
+static void timerOCPreloadConfig(TIM_TypeDef *t, uint8_t ch, uint16_t p) { (void)t; (void)ch; (void)p; }
+static void timerOCInit(TIM_TypeDef *t, uint8_t ch, TIM_OCInitTypeDef *s) { (void)t; (void)ch; (void)s; }
+static void TIM_SetAutoreload(TIM_TypeDef *t, uint32_t arr) { t->ATRLR = arr; }
+static void TIM_ICInit(TIM_TypeDef *t, TIM_ICInitTypeDef *s) { (void)t; (void)s; }
+static void xDMA_Init(dmaResource_t *r, DMA_InitTypeDef *s) { (void)s; /* WCH DMA_Init preserves TCIE bit in CFGR! */ (void)r; }
+static void xDMA_ITConfig(dmaResource_t *r, uint32_t it, int state) {
+    if (state) {
+        flagsWhenOutputTcEnabled = dmaDesc.flags;
+        r->CFGR |= it;
+    } else {
+        r->CFGR &= ~it;
+    }
+}
+static dmaIdentifier_e dmaGetIdentifier(const dmaResource_t *r) { return r == &dmaCh ? 1 : 0; }
+static dmaChannelDescriptor_t *dmaGetDescriptorByIdentifier(dmaIdentifier_e id) { return id == 1 ? &dmaDesc : NULL; }
+static void NVIC_ClearPendingIRQ(int irq) { clearedIrqN = irq; }
+#define DMA_GET_FLAG_STATUS(d, f) (((d)->flags & (f)) != 0)
+#define DMA_CLEAR_FLAG(d, f) ((d)->flags &= ~(uint32_t)(f))
+''' + fn('src/platform/CH32/pwm_output_dshot.c', 'static inline bool isTimer32Bit(')
+    + fn('src/platform/CH32/pwm_output_dshot.c', 'static inline void pwmDshotConfigGpioPin(')
+    + fn('src/platform/CH32/pwm_output_dshot.c', 'FAST_CODE void pwmDshotSetDirectionOutput(')
+    + fn('src/platform/CH32/pwm_output_dshot.c', 'FAST_CODE static void pwmDshotSetDirectionInput(')
+    + fn('src/platform/CH32/pwm_output_dshot.c', 'FAST_CODE static void motor_DMA_IRQHandler(') + '''
+int main(void) {
+    /* Pin PE3 (nibble 3 = mask 0xF000) with sibling motor pins PE4..PE6 pre-set to 0xBBB0000 */
+    gpioe.CFGLR = 0x0BBBF333U;
+    gpioe.CFGHR = 0x88888888U;
+    timerHardware_t hw3 = { .tim = TIM3, .channel = 0, .tag = 3 };
+    dmaMotors[0] = (motorDmaOutput_t){ .timerHardware = &hw3, .dmaRef = &dmaCh, .timerDmaSource = 0x02U };
+
+    /* 1. Output mode enables TCIE after clearing stale flags and sets PE3 nibble to 0xB in one atomic write */
+    dmaDesc.flags = DMA_IT_GLOB | DMA_IT_TCIF | DMA_IT_HTIF;
+    regWriteCount = 0; sawTransientAin = 0;
+    pwmDshotSetDirectionOutput(&dmaMotors[0]);
+    if (flagsWhenOutputTcEnabled != 0 || clearedIrqN != 47 || (dmaCh.CFGR & DMA_IT_TC) == 0) return 1;
+    if (gpioe.CFGLR != 0x0BBBB333U || regWriteCount != 1 || sawTransientAin || atomicEntries == 0) return 2;
+
+    /* 2. TX TC ISR turns line around to Input: disables TCIE, sets PE3 to 0x8 + BSHR pull-up, enables TIM3 AUX */
+    dmaDesc.flags = DMA_IT_TCIF;
+    regWriteCount = 0;
+    motor_DMA_IRQHandler(&dmaDesc);
+    if (!dmaMotors[0].isInput || (dmaCh.CFGR & DMA_IT_TC) != 0 || dmaCh.CNTR != GCR_TELEMETRY_INPUT_LEN) return 3;
+    if (gpioe.CFGLR != 0x0BBB8333U || gpioe.BSHR != (1U << 3) || regWriteCount != 1 || sawTransientAin) return 4;
+    if ((TIM3->AUX & TIM_AUX_CAPCH234_ED) != TIM_AUX_CAPCH234_ED) return 5;
+
+    /* 3. Even if 25 edges are captured (CNTR=17) and a spurious TCIF arrives in Input mode, CNTR is NOT reset to 42 */
+    dmaCh.CNTR = 17U;
+    dmaDesc.flags = DMA_IT_TCIF;
+    motor_DMA_IRQHandler(&dmaDesc);
+    if (dmaCh.CNTR != 17U) return 6;
+
+    /* 4. 32-bit TIM9 does NOT touch unsupported AUX register in input mode */
+    timerHardware_t hw9 = { .tim = TIM9, .channel = 0, .tag = 10 };
+    dmaMotors[0].timerHardware = &hw9;
+    dmaMotors[0].isInput = false;
+    TIM9->AUX = 0;
+    dmaDesc.flags = DMA_IT_TCIF;
+    motor_DMA_IRQHandler(&dmaDesc);
+    if (TIM9->AUX != 0 || ((gpioe.CFGHR >> 8) & 0xFU) != 0x8U) return 7;
+
+    puts("Timer-driven BiDShot disables input TCIE, clears stale TCIF before TX, guards TIM9 AUX, and updates GPIO atomically");
+}
+''')
