@@ -2526,8 +2526,12 @@ run('ws2811_ledstrip_dma_and_isr', '''
 #define DMA_M2M_Disable 0
 #define DMA_Mode_Normal 0
 #define DMA_IT_TC 2
+#define DMA_IT_GLOB 1
 #define DMA_IT_TCIF 2
+#define DMA_IT_HTIF 4
+#define DMA_IT_TEIF 8
 typedef int ioTag_t;
+typedef int dmaIdentifier_e;
 typedef void *IO_t;
 typedef struct { int id; } dmaResource_t;
 typedef struct { int dummy; } TIM_TypeDef;
@@ -2540,7 +2544,7 @@ static TIM_TypeDef tim4_inst, tim9_inst, tim10_inst, tim11_inst, tim12_inst;
 #define TIM12 (&tim12_inst)
 typedef struct { TIM_TypeDef *tim; uint8_t channel; uint8_t output; uint8_t alternateFunction; } timerHardware_t;
 typedef struct { dmaResource_t *ref; uint32_t dmaMuxId; } dmaChannelSpec_t;
-typedef struct dmaChannelDescriptor_s { dmaResource_t *ref; uint32_t flags; } dmaChannelDescriptor_t;
+typedef struct dmaChannelDescriptor_s { dmaResource_t *ref; uint32_t flags; int irqN; } dmaChannelDescriptor_t;
 typedef void (*dmaCallbackHandlerFuncPtr)(dmaChannelDescriptor_t *);
 typedef struct { uint32_t TIM_Period; uint16_t TIM_Prescaler; uint16_t TIM_ClockDivision; uint16_t TIM_CounterMode; } TIM_TimeBaseInitTypeDef;
 typedef struct { uint16_t TIM_OCMode; uint16_t TIM_OutputState; uint16_t TIM_OutputNState; uint32_t TIM_Pulse; uint16_t TIM_OCPolarity; uint16_t TIM_OCNPolarity; uint16_t TIM_OCIdleState; uint16_t TIM_OCNIdleState; } TIM_OCInitTypeDef;
@@ -2552,6 +2556,7 @@ static uint16_t BIT_COMPARE_1, BIT_COMPARE_0;
 static volatile bool ws2811LedDataTransferInProgress;
 static IO_t ws2811IO = IO_NONE;
 static dmaResource_t fakeDma = { .id = 6 };
+static dmaChannelDescriptor_t fakeDesc = { .ref = &fakeDma, .flags = 0x0Fu, .irqN = 55 };
 static dmaResource_t *dmaRef = NULL;
 static TIM_TypeDef *timer = NULL;
 static timerHardware_t activeHw;
@@ -2560,7 +2565,11 @@ static DMA_InitTypeDef lastDmaInit;
 static TIM_TimeBaseInitTypeDef lastTimBase;
 static uint32_t lastMuxId;
 static int dmaEnabledState = -1;
+static int timEnabledState = -1;
+static int timStateAtDmaEnable = -1;
 static int stateWhenReadyCleared = -1;
+static int clearedIrqN = -1;
+static uint32_t flagsAtItEnable = 0xFFu;
 static dmaCallbackHandlerFuncPtr registeredHandler;
 static uint32_t fakeCcr;
 static int fakeIoObj;
@@ -2574,14 +2583,15 @@ static uint16_t timerGetPrescalerByDesiredHertz(timerResource_t *t, uint32_t hz)
     + fn('src/platform/CH32/timer_ch32bsp.c', 'uint16_t timerGetPrescalerByDesiredHertz(') + '''
 static const timerHardware_t *timerAllocate(ioTag_t tag, int owner, int idx) { (void)tag; (void)owner; (void)idx; return &activeHw; }
 static const dmaChannelSpec_t *dmaGetChannelSpecByTimer(const timerHardware_t *hw) { (void)hw; return &activeSpec; }
-static int dmaGetIdentifier(const dmaResource_t *r) { return r ? r->id : 0; }
+static dmaIdentifier_e dmaGetIdentifier(const dmaResource_t *r) { return r ? r->id : 0; }
+static dmaChannelDescriptor_t *dmaGetDescriptorByIdentifier(dmaIdentifier_e id) { return id == 6 ? &fakeDesc : NULL; }
 static bool dmaAllocate(int id, int owner, int idx) { (void)owner; (void)idx; return id == 6; }
 static IO_t IOGetByTag(ioTag_t tag) { return tag ? &fakeIoObj : NULL; }
 static void IOInit(IO_t io, int owner, int idx) { (void)io; (void)owner; (void)idx; }
 static void IOConfigGPIOAF(IO_t io, uint32_t cfg, uint8_t af) { (void)io; (void)cfg; (void)af; }
 static int timerRCC(const TIM_TypeDef *t) { (void)t; return 1; }
 static void RCC_ClockCmd(int rcc, int cmd) { (void)rcc; (void)cmd; }
-static void TIM_Cmd(TIM_TypeDef *t, int cmd) { (void)t; (void)cmd; }
+static void TIM_Cmd(TIM_TypeDef *t, int cmd) { (void)t; timEnabledState = cmd; }
 static void TIM_TimeBaseStructInit(TIM_TimeBaseInitTypeDef *s) { memset(s, 0, sizeof(*s)); }
 static void TIM_TimeBaseInit(TIM_TypeDef *t, TIM_TimeBaseInitTypeDef *s) { (void)t; lastTimBase = *s; }
 static void TIM_OCStructInit(TIM_OCInitTypeDef *s) { memset(s, 0, sizeof(*s)); }
@@ -2593,7 +2603,7 @@ static void TIM_CCxNCmd(TIM_TypeDef *t, uint8_t ch, uint16_t cmd) { (void)t; (vo
 static void TIM_CCxCmd(TIM_TypeDef *t, uint8_t ch, uint16_t cmd) { (void)t; (void)ch; (void)cmd; }
 static void dmaEnable(int id) { (void)id; }
 static void dmaSetHandler(int id, dmaCallbackHandlerFuncPtr cb, uint32_t prio, uint32_t user) { (void)id; (void)prio; (void)user; registeredHandler = cb; }
-static void xDMA_Cmd(dmaResource_t *r, int cmd) { (void)r; dmaEnabledState = cmd; }
+static void xDMA_Cmd(dmaResource_t *r, int cmd) { (void)r; dmaEnabledState = cmd; if (cmd == ENABLE) timStateAtDmaEnable = timEnabledState; }
 static void xDMA_DeInit(dmaResource_t *r) { (void)r; }
 static void DMA_StructInit(DMA_InitTypeDef *s) { memset(s, 0, sizeof(*s)); }
 static uint32_t *timerCCR(TIM_TypeDef *t, uint8_t ch) { (void)t; (void)ch; return &fakeCcr; }
@@ -2601,9 +2611,10 @@ static void xDMA_Init(dmaResource_t *r, DMA_InitTypeDef *s) { (void)r; lastDmaIn
 static void dmaMuxEnable(int id, uint32_t mux) { (void)id; lastMuxId = mux; }
 static uint16_t timerDmaSource(uint8_t ch) { return (uint16_t)(1u << ch); }
 static void TIM_DMACmd(TIM_TypeDef *t, uint16_t src, int cmd) { (void)t; (void)src; (void)cmd; }
-static void xDMA_ITConfig(dmaResource_t *r, uint32_t it, int cmd) { (void)r; (void)it; (void)cmd; }
+static void xDMA_ITConfig(dmaResource_t *r, uint32_t it, int cmd) { (void)r; (void)it; if (cmd == ENABLE) flagsAtItEnable = fakeDesc.flags; }
 static void xDMA_SetCurrDataCounter(dmaResource_t *r, uint16_t cnt) { (void)r; (void)cnt; }
 static void TIM_SetCounter(TIM_TypeDef *t, uint32_t cnt) { (void)t; (void)cnt; }
+static void NVIC_ClearPendingIRQ(int irq) { clearedIrqN = irq; }
 static void ch32DmaBarrier(void) { stateWhenReadyCleared = dmaEnabledState; }
 #define DMA_GET_FLAG_STATUS(d, f) (((d)->flags & (f)) != 0)
 #define DMA_CLEAR_FLAG(d, f) ((d)->flags &= ~(uint32_t)(f))
@@ -2612,18 +2623,18 @@ static void ch32DmaBarrier(void) { stateWhenReadyCleared = dmaEnabledState; }
     + fn('src/platform/CH32/light_ws2811strip_ch32h41x.c', 'bool ws2811LedStripHardwareInit(')
     + fn('src/platform/CH32/light_ws2811strip_ch32h41x.c', 'void ws2811LedStripStartTransfer(') + '''
 int main(void) {
-    /* 1. 16-bit TIM4 (RATE_H4_RACING PB6) uses HalfWord peripheral width and 50 MHz / 800 kHz = 62 ticks (ARR=61) */
+    /* 1. 16-bit TIM4 (RATE_H4_RACING PB6) uses HalfWord peripheral width and clears stale flags/IRQ before TCIE */
     activeHw = (timerHardware_t){ .tim = TIM4, .channel = 0, .output = 0, .alternateFunction = 2 };
     if (!ws2811LedStripHardwareInit()) return 1;
     if (lastTimBase.TIM_Prescaler != 7 || lastTimBase.TIM_Period != 61) return 2;
     if (BIT_COMPARE_0 != 20 || BIT_COMPARE_1 != 40) return 3;
     if (lastDmaInit.DMA_PeripheralDataSize != DMA_PeripheralDataSize_HalfWord || lastDmaInit.DMA_MemoryDataSize != DMA_MemoryDataSize_Word) return 4;
-    if (lastMuxId != 45 || !registeredHandler) return 5;
+    if (lastMuxId != 45 || !registeredHandler || flagsAtItEnable != 0 || clearedIrqN != 55) return 5;
 
-    /* 2. Start transfer enables DMA, and TC ISR disables DMA + barriers BEFORE clearing ws2811LedDataTransferInProgress */
+    /* 2. Start transfer keeps timer disabled until DMA is armed, then enables timer; TC ISR disables DMA + barriers first */
     ws2811LedDataTransferInProgress = true;
     ws2811LedStripStartTransfer();
-    if (dmaEnabledState != ENABLE) return 6;
+    if (dmaEnabledState != ENABLE || timStateAtDmaEnable != DISABLE || timEnabledState != ENABLE) return 6;
     dmaChannelDescriptor_t desc = { .ref = &fakeDma, .flags = DMA_IT_TCIF };
     registeredHandler(&desc);
     if (ws2811LedDataTransferInProgress || dmaEnabledState != DISABLE || stateWhenReadyCleared != DISABLE || desc.flags != 0) return 7;
@@ -2632,7 +2643,7 @@ int main(void) {
     activeHw.tim = TIM9;
     if (!ws2811LedStripHardwareInit()) return 8;
     if (lastDmaInit.DMA_PeripheralDataSize != DMA_PeripheralDataSize_Word) return 9;
-    puts("WS2811 LED strip selects 16/32-bit CCR width, exact 800 kHz timing, and race-free DMA completion");
+    puts("WS2811 LED strip selects 16/32-bit CCR width, clears stale flags, aligns bit 0, and completes race-free");
 }
 ''')
 run('camera_control_modes_and_fallback', '''
@@ -2762,16 +2773,20 @@ static const cameraControlConfig_t *cameraControlConfig(void) { return &cfg; }
 static cameraControlRuntime_t *cameraControlRuntime;
 static cameraControlMode_e activeMode = CAMERA_CONTROL_MODES_COUNT;
 static timerChannel_t channel;
+static volatile uint16_t softPwmHiTime;
 static uint32_t activeDacChannel;
 static const timerHardware_t *allocTim;
 static uint32_t hwCcr;
+static uint32_t hwCcrAtAfMux;
 static int pinLevel = -1;
 static int pinLevelAtOutPpSwitch = -1;
+static int contentionDetected = 0;
 static uint32_t dacCodeAtEnable = 0xFFFFFFFFU;
-static uint32_t lastIoCfg;
+static uint32_t lastIoCfg = CAMERA_CONTROL_IO_ANALOG_CFG;
 static timeMs_t fakeNowMs = 1000;
 
 static timeMs_t millis(void) { return fakeNowMs; }
+static void ch32DmaBarrier(void) {}
 static IO_t IOGetByTag(ioTag_t tag) {
     if (tag == TAG_PA4) return &pa4Obj;
     if (tag == TAG_PB8) return &pb8Obj;
@@ -2781,10 +2796,17 @@ static void IOHi(IO_t io) { (void)io; pinLevel = 1; }
 static void IOLo(IO_t io) { (void)io; pinLevel = 0; }
 static void IOConfigGPIO(IO_t io, uint32_t c) {
     (void)io;
-    if (c == IOCFG_OUT_PP) pinLevelAtOutPpSwitch = pinLevel;
+    if (c == IOCFG_OUT_PP) {
+        pinLevelAtOutPpSwitch = pinLevel;
+        if ((DAC->CTLR & DAC_EN1) != 0) contentionDetected = 1;
+    }
     lastIoCfg = c;
 }
-static void IOConfigGPIOAF(IO_t io, uint32_t c, uint8_t af) { (void)io; (void)af; lastIoCfg = c; }
+static void IOConfigGPIOAF(IO_t io, uint32_t c, uint8_t af) {
+    (void)io; (void)af;
+    hwCcrAtAfMux = hwCcr;
+    lastIoCfg = c;
+}
 static const timerHardware_t *timerAllocate(ioTag_t tag, int owner, int idx) { (void)tag; (void)owner; (void)idx; return allocTim; }
 static uint32_t timerClock(const timerHardware_t *hw) { (void)hw; return 400000000U; }
 static void pwmOutputConfig(timerChannel_t *ch, const timerHardware_t *hw, uint32_t hz, uint16_t period, uint16_t val, uint8_t inv) {
@@ -2800,11 +2822,13 @@ static uint16_t timerGetPrescalerByDesiredHertz(timerResource_t *t, uint32_t hz)
     + fn('src/platform/CH32/timer_ch32bsp.c', 'uint16_t timerGetPrescalerByDesiredHertz(') + '''
 static void NVIC_SetPriority(int irq, uint32_t prio) { (void)irq; (void)prio; }
 static void NVIC_EnableIRQ(int irq) { (void)irq; }
+static void NVIC_ClearPendingIRQ(int irq) { (void)irq; }
 static void RCC_ClockCmd(uint32_t mask, int state) { if (state) RCC->HB1ENR |= mask; else RCC->HB1ENR &= ~mask; }
 static void DAC_StructInit(DAC_InitTypeDef *s) { memset(s, 0, sizeof(*s)); }
 static void DAC_Init(uint32_t ch, DAC_InitTypeDef *s) { (void)ch; (void)s; }
 static void DAC_Cmd(uint32_t ch, int state) {
     if (state) {
+        if (lastIoCfg == IOCFG_OUT_PP) contentionDetected = 1;
         dacCodeAtEnable = (ch == DAC_Channel_1) ? DAC->R12BDHR1 : DAC->R12BDHR2;
         DAC->CTLR |= (DAC_EN1 << ch);
     } else {
@@ -2824,12 +2848,13 @@ static void DAC_Cmd(uint32_t ch, int state) {
     + fn('src/platform/CH32/camera_control_ch32.c', 'static bool cameraControlResolveDacChannel(')
     + fn('src/platform/CH32/camera_control_ch32.c', 'static void cameraControlDacWriteCode(')
     + fn('src/platform/CH32/camera_control_ch32.c', 'static bool cameraControlDacTryInit(')
+    + fn('src/platform/CH32/camera_control_ch32.c', 'static void cameraControlStopActiveBackend(')
     + fn('src/platform/CH32/camera_control_ch32.c', 'void cameraControlInitImpl(')
     + fn('src/platform/CH32/camera_control_ch32.c', 'void cameraControlProcessImpl(')
     + fn('src/platform/CH32/camera_control_ch32.c', 'void cameraControlKeyPressImpl(') + '''
 int main(void) {
     cfg = (cameraControlConfig_t){
-        .mode = CAMERA_CONTROL_MODE_HARDWARE_PWM,
+        .mode = CAMERA_CONTROL_MODE_DAC,
         .refVoltage = 330,
         .keyDelayMs = 180,
         .internalResistance = 470,
@@ -2838,8 +2863,9 @@ int main(void) {
         .buttonResistanceValues = { 450, 270, 150, 68, 0 },
     };
 
-    /* 1. RATE_H4_RACING PA4: TIM10 owned by TheiaOSD (timerAllocate -> NULL) falls back to 12-bit DAC1 */
-    allocTim = NULL;
+    /* 1. Default DAC-first mode: PA4 prefers 12-bit DAC1 with break-before-make (zero CMOS/DAC contention) */
+    timerHardware_t hw = { .tim = &tim3_inst, .alternateFunction = 2 };
+    allocTim = &hw;
     cameraControlRuntime_t rt = { .io = &pa4Obj, .inverted = 0 };
     cameraControlInitImpl(&rt);
     if (!rt.enabled || activeMode != CAMERA_CONTROL_MODE_DAC || (RCC->HB1ENR & RCC_HB1Periph_DAC) == 0) return 1;
@@ -2853,56 +2879,86 @@ int main(void) {
         if (rt.endTimeMillis != 1380) return 5;
     }
 
-    /* DOWN (0 ohm) drives rail-to-rail CMOS Low and powers down DAC1; ProcessImpl restores glitch-free CMOS High */
     cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_DOWN, 0);
     if (lastIoCfg != IOCFG_OUT_PP || pinLevel != 0 || pinLevelAtOutPpSwitch != 0 || (DAC->CTLR & DAC_EN1) != 0) return 6;
     cameraControlProcessImpl();
     if (lastIoCfg != IOCFG_OUT_PP || pinLevel != 1 || pinLevelAtOutPpSwitch != 1 || (DAC->CTLR & DAC_EN1) != 0) return 7;
+    if (contentionDetected) return 8;
 
-    /* Inverted DAC mode mirrors idle/rail polarity and mid-scale codes */
+    /* Inverted DAC mode + 49.7-day millis() rollover sentinel guard (holdEndMillis == 0 -> 1) */
     rt.inverted = 1;
     cameraControlInitImpl(&rt);
-    if (pinLevel != 0 || (DAC->CTLR & DAC_EN1) != 0) return 8;
+    if (pinLevel != 0 || (DAC->CTLR & DAC_EN1) != 0) return 9;
+    fakeNowMs = 0xFFFFFFFFU - 180U + 1U;
     cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_ENTER, 0);
-    if (DAC->R12BDHR1 != (4095 - 2003) || lastIoCfg != CAMERA_CONTROL_IO_ANALOG_CFG) return 9;
+    if (DAC->R12BDHR1 != (4095 - 2003) || lastIoCfg != CAMERA_CONTROL_IO_ANALOG_CFG || rt.endTimeMillis != 1) return 10;
+    fakeNowMs = 1000;
     cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_DOWN, 0);
-    if (pinLevel != 1 || lastIoCfg != IOCFG_OUT_PP || (DAC->CTLR & DAC_EN1) != 0) return 10;
+    if (pinLevel != 1 || lastIoCfg != IOCFG_OUT_PP || (DAC->CTLR & DAC_EN1) != 0 || contentionDetected) return 11;
 
-    /* 2. Non-DAC pin without free timer falls back to non-blocking 20 MHz TIM6+TIM7 SOFTWARE_PWM */
+    /* 2. Default DAC-first mode on non-DAC pin WITH free timer falls back to HARDWARE_PWM without boot low pulse */
     cfg.ioTag = TAG_PB8;
     rt = (cameraControlRuntime_t){ .io = &pb8Obj, .inverted = 0 };
     cameraControlInitImpl(&rt);
-    if (!rt.enabled || activeMode != CAMERA_CONTROL_MODE_SOFTWARE_PWM) return 11;
-    if (TIM6->PSC != 19 || TIM7->PSC != 19 || TIM6->SWEVGR != TIM_PSCReloadMode_Immediate || TIM7->SWEVGR != TIM_PSCReloadMode_Immediate) return 12;
-    if (pinLevel != 1 || lastIoCfg != IOCFG_OUT_PP) return 13;
+    if (!rt.enabled || activeMode != CAMERA_CONTROL_MODE_HARDWARE_PWM || hwCcr != 128 || hwCcrAtAfMux != 128) return 12;
+    cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_ENTER, 0);
+    if (hwCcr != 63 || rt.endTimeMillis != 1180) return 13;
+    cameraControlProcessImpl();
+    if (hwCcr != 128) return 14;
+
+    /* 3. Default DAC-first mode on non-DAC pin WITHOUT free timer falls back to 20 MHz TIM6+TIM7 SOFTWARE_PWM */
+    allocTim = NULL;
+    cameraControlInitImpl(&rt);
+    if (!rt.enabled || activeMode != CAMERA_CONTROL_MODE_SOFTWARE_PWM) return 15;
+    if (TIM6->PSC != 19 || TIM7->PSC != 19 || TIM6->SWEVGR != TIM_PSCReloadMode_Immediate || TIM7->SWEVGR != TIM_PSCReloadMode_Immediate) return 16;
+    if (pinLevel != 1 || lastIoCfg != IOCFG_OUT_PP) return 17;
 
     cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_ENTER, 2000);
-    if (TIM6->CNT != 219 || TIM6->ATRLR != 448 || TIM7->CNT != 0 || TIM7->ATRLR != 448) return 14;
-    if (TIM6->CTLR1 != TIM_CEN || TIM7->CTLR1 != TIM_CEN || TIM6->DMAINTENR != TIM_IT_Update || TIM7->DMAINTENR != TIM_IT_Update) return 15;
-    if (rt.endTimeMillis != 3180) return 16;
+    if (TIM6->CNT != 219 || TIM6->ATRLR != 448 || TIM7->CNT != 0 || TIM7->ATRLR != 448) return 18;
+    if (TIM6->CTLR1 != TIM_CEN || TIM7->CTLR1 != TIM_CEN || TIM6->DMAINTENR != TIM_IT_Update || TIM7->DMAINTENR != TIM_IT_Update) return 19;
+    if (rt.endTimeMillis != 3180) return 20;
 
+    /* Normal on-time ISR edges: TIM6 overflow -> CNT=0 < hiTime (Hi), TIM7 overflow -> CNT=hiTime >= hiTime (Lo) */
+    TIM6->CNT = 0;
     TIM6->INTFR = TIM_IT_Update;
     TIM6_IRQHandler();
-    if (pinLevel != 1 || TIM6->INTFR != 0) return 17;
+    if (pinLevel != 1 || TIM6->INTFR != 0) return 21;
+    TIM6->CNT = 219;
     TIM7->INTFR = TIM_IT_Update;
     TIM7_IRQHandler();
-    if (pinLevel != 0 || TIM7->INTFR != 0) return 18;
+    if (pinLevel != 0 || TIM7->INTFR != 0) return 22;
 
-    cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_DOWN, 0);
-    if ((TIM6->CTLR1 & TIM_CEN) != 0 || (TIM7->CTLR1 & TIM_CEN) != 0 || pinLevel != 0) return 19;
-    cameraControlProcessImpl();
-    if ((TIM6->CTLR1 & TIM_CEN) != 0 || TIM6->DMAINTENR != 0 || pinLevel != 1) return 20;
+    /* [BUG-3] Simultaneous-pending TIM6+TIM7 during HIGH phase (e.g. hiTime=447 after >100ns Group-0 ISR) MUST stay HIGH */
+    cameraControlSoftwarePwmEnable(447, 448);
+    TIM6->CNT = 1;
+    TIM6->INTFR = TIM_IT_Update;
+    TIM7->INTFR = TIM_IT_Update;
+    TIM6_IRQHandler();
+    TIM7_IRQHandler();
+    if (pinLevel != 1) return 23;
 
-    /* 3. Pin with available hardware timer uses HARDWARE_PWM directly */
-    timerHardware_t hw = { .tim = &tim3_inst, .alternateFunction = 2 };
-    allocTim = &hw;
+    /* [BUG-3] Simultaneous-pending TIM6+TIM7 during LOW phase (e.g. hiTime=1 after >50ns Group-0 ISR) MUST stay LOW without glitch */
+    cameraControlSoftwarePwmEnable(1, 448);
+    TIM6->CNT = 2;
+    TIM6->INTFR = TIM_IT_Update;
+    TIM7->INTFR = TIM_IT_Update;
+    TIM6_IRQHandler();
+    if (pinLevel != 0) return 24;
+    TIM7_IRQHandler();
+    if (pinLevel != 0) return 25;
+
+    /* [BUG-5] Re-init with IO_NONE stops active SOFTWARE_PWM timers and clears runtime->enabled */
+    rt.io = IO_NONE;
     cameraControlInitImpl(&rt);
-    if (!rt.enabled || activeMode != CAMERA_CONTROL_MODE_HARDWARE_PWM || hwCcr != 128) return 21;
-    cameraControlKeyPressImpl(CAMERA_CONTROL_KEY_ENTER, 0);
-    if (hwCcr != 63 || rt.endTimeMillis != 1180) return 22;
-    cameraControlProcessImpl();
-    if (hwCcr != 128) return 23;
+    if (rt.enabled || activeMode != CAMERA_CONTROL_MODES_COUNT || (TIM6->CTLR1 & TIM_CEN) != 0 || TIM6->DMAINTENR != 0) return 26;
 
-    puts("CH32H4 camera control supports HARDWARE_PWM, 12-bit DAC, and non-blocking 20 MHz SOFTWARE_PWM with automatic fallback");
+    /* 4. Legacy saved HARDWARE_PWM config on PA4 (where TIM10 is reserved) still falls back to DAC1 */
+    cfg.mode = CAMERA_CONTROL_MODE_HARDWARE_PWM;
+    cfg.ioTag = TAG_PA4;
+    rt = (cameraControlRuntime_t){ .io = &pa4Obj, .inverted = 0 };
+    cameraControlInitImpl(&rt);
+    if (!rt.enabled || activeMode != CAMERA_CONTROL_MODE_DAC) return 27;
+
+    puts("CH32H4 camera control prefers 12-bit DAC -> HARDWARE_PWM -> 20 MHz SOFTWARE_PWM with simultaneous-IRQ & break-before-make safety");
 }
 ''', extra_flags=('-lm',))

@@ -55,6 +55,10 @@ static cameraControlMode_e activeMode = CAMERA_CONTROL_MODES_COUNT;
 static timerChannel_t channel;
 #endif
 
+#ifdef CAMERA_CONTROL_SOFTWARE_PWM_AVAILABLE
+static volatile uint16_t softPwmHiTime;
+#endif
+
 #ifdef CAMERA_CONTROL_DAC_AVAILABLE
 static uint32_t activeDacChannel;
 #endif
@@ -89,11 +93,12 @@ static bool cameraControlHardwarePwmTryInit(void)
         return false;
     }
 
-    IOConfigGPIOAF(cameraControlRuntime->io, IOCFG_AF_PP, timerHardware->alternateFunction);
-    pwmOutputConfig(&channel, timerHardware, timerClock(timerHardware), CAMERA_CONTROL_PWM_RESOLUTION, 0, cameraControlRuntime->inverted);
+    pwmOutputConfig(&channel, timerHardware, timerClock(timerHardware), CAMERA_CONTROL_PWM_RESOLUTION, CAMERA_CONTROL_PWM_RESOLUTION, cameraControlRuntime->inverted);
 
     cameraControlRuntime->period = CAMERA_CONTROL_PWM_RESOLUTION;
     *channel.ccr = cameraControlRuntime->period;
+    IOConfigGPIOAF(cameraControlRuntime->io, IOCFG_AF_PP, timerHardware->alternateFunction);
+
     activeMode = CAMERA_CONTROL_MODE_HARDWARE_PWM;
     cameraControlRuntime->enabled = true;
     return true;
@@ -130,26 +135,34 @@ static void cameraControlLo(void)
 __FAST_INTERRUPT
 void TIM6_IRQHandler(void)
 {
-    cameraControlHi();
     TIM6->INTFR = 0;
+    if (TIM6->CNT < softPwmHiTime) {
+        cameraControlHi();
+    }
 }
 
 __FAST_INTERRUPT
 void TIM7_IRQHandler(void)
 {
-    cameraControlLo();
     TIM7->INTFR = 0;
+    if (TIM6->CNT >= softPwmHiTime) {
+        cameraControlLo();
+    }
 }
 
 static void cameraControlSoftwarePwmDisable(void)
 {
     ATOMIC_BLOCK(NVIC_PRIO_TIMER) {
+        softPwmHiTime = 0;
         TIM6->CTLR1 &= (uint16_t)~TIM_CEN;
         TIM7->CTLR1 &= (uint16_t)~TIM_CEN;
         TIM6->DMAINTENR = 0;
         TIM7->DMAINTENR = 0;
         TIM6->INTFR = 0;
         TIM7->INTFR = 0;
+        ch32DmaBarrier();
+        NVIC_ClearPendingIRQ(TIM6_IRQn);
+        NVIC_ClearPendingIRQ(TIM7_IRQn);
     }
 }
 
@@ -161,6 +174,7 @@ static void cameraControlSoftwarePwmEnable(uint32_t hiTime, uint32_t period)
         TIM6->DMAINTENR = 0;
         TIM7->DMAINTENR = 0;
 
+        softPwmHiTime = (uint16_t)hiTime;
         TIM6->CNT = (uint16_t)hiTime;
         TIM6->ATRLR = (uint16_t)period;
 
@@ -169,6 +183,9 @@ static void cameraControlSoftwarePwmEnable(uint32_t hiTime, uint32_t period)
 
         TIM6->INTFR = 0;
         TIM7->INTFR = 0;
+        ch32DmaBarrier();
+        NVIC_ClearPendingIRQ(TIM6_IRQn);
+        NVIC_ClearPendingIRQ(TIM7_IRQn);
 
         cameraControlLo();
 
@@ -195,14 +212,19 @@ static bool cameraControlSoftwarePwmTryInit(void)
     TIM7->SWEVGR = TIM_PSCReloadMode_Immediate;
     TIM6->INTFR = 0;
     TIM7->INTFR = 0;
+    ch32DmaBarrier();
+    NVIC_ClearPendingIRQ(TIM6_IRQn);
+    NVIC_ClearPendingIRQ(TIM7_IRQn);
 
     NVIC_SetPriority(TIM6_IRQn, NVIC_PRIO_TIMER);
     NVIC_EnableIRQ(TIM6_IRQn);
     NVIC_SetPriority(TIM7_IRQn, NVIC_PRIO_TIMER);
     NVIC_EnableIRQ(TIM7_IRQn);
 
-    cameraControlHi();
-    IOConfigGPIO(cameraControlRuntime->io, IOCFG_OUT_PP);
+    ATOMIC_BLOCK(NVIC_PRIO_TIMER) {
+        cameraControlHi();
+        IOConfigGPIO(cameraControlRuntime->io, IOCFG_OUT_PP);
+    }
 
     cameraControlRuntime->period = CAMERA_CONTROL_SOFT_PWM_RESOLUTION;
     activeMode = CAMERA_CONTROL_MODE_SOFTWARE_PWM;
@@ -243,28 +265,25 @@ static void cameraControlDacWriteCode(uint16_t rawCode)
         ? (uint16_t)(CAMERA_CONTROL_DAC_MAX_CODE - rawCode)
         : rawCode;
 
-    if (effectiveCode == 0) {
-        IOLo(cameraControlRuntime->io);
-        IOConfigGPIO(cameraControlRuntime->io, IOCFG_OUT_PP);
-        DAC_Cmd(activeDacChannel, DISABLE);
-        return;
+    ATOMIC_BLOCK(NVIC_PRIO_TIMER) {
+        if (effectiveCode == 0) {
+            DAC_Cmd(activeDacChannel, DISABLE);
+            IOLo(cameraControlRuntime->io);
+            IOConfigGPIO(cameraControlRuntime->io, IOCFG_OUT_PP);
+        } else if (effectiveCode >= CAMERA_CONTROL_DAC_MAX_CODE) {
+            DAC_Cmd(activeDacChannel, DISABLE);
+            IOHi(cameraControlRuntime->io);
+            IOConfigGPIO(cameraControlRuntime->io, IOCFG_OUT_PP);
+        } else {
+            IOConfigGPIO(cameraControlRuntime->io, CAMERA_CONTROL_IO_ANALOG_CFG);
+            if (activeDacChannel == DAC_Channel_1) {
+                DAC->R12BDHR1 = effectiveCode;
+            } else {
+                DAC->R12BDHR2 = effectiveCode;
+            }
+            DAC_Cmd(activeDacChannel, ENABLE);
+        }
     }
-
-    if (effectiveCode >= CAMERA_CONTROL_DAC_MAX_CODE) {
-        IOHi(cameraControlRuntime->io);
-        IOConfigGPIO(cameraControlRuntime->io, IOCFG_OUT_PP);
-        DAC_Cmd(activeDacChannel, DISABLE);
-        return;
-    }
-
-    if (activeDacChannel == DAC_Channel_1) {
-        DAC->R12BDHR1 = effectiveCode;
-    } else {
-        DAC->R12BDHR2 = effectiveCode;
-    }
-
-    DAC_Cmd(activeDacChannel, ENABLE);
-    IOConfigGPIO(cameraControlRuntime->io, CAMERA_CONTROL_IO_ANALOG_CFG);
 }
 
 static bool cameraControlDacTryInit(void)
@@ -278,15 +297,17 @@ static bool cameraControlDacTryInit(void)
         RCC_ClockCmd(RCC_HB1(DAC), ENABLE);
     }
 
-    activeDacChannel = dacChannel;
-    DAC_Cmd(activeDacChannel, DISABLE);
+    ATOMIC_BLOCK(NVIC_PRIO_TIMER) {
+        activeDacChannel = dacChannel;
+        DAC_Cmd(activeDacChannel, DISABLE);
 
-    DAC_InitTypeDef dacInit;
-    DAC_StructInit(&dacInit);
-    dacInit.DAC_Trigger = DAC_Trigger_None;
-    dacInit.DAC_WaveGeneration = DAC_WaveGeneration_None;
-    dacInit.DAC_OutputBuffer = DAC_OutputBuffer_Enable;
-    DAC_Init(activeDacChannel, &dacInit);
+        DAC_InitTypeDef dacInit;
+        DAC_StructInit(&dacInit);
+        dacInit.DAC_Trigger = DAC_Trigger_None;
+        dacInit.DAC_WaveGeneration = DAC_WaveGeneration_None;
+        dacInit.DAC_OutputBuffer = DAC_OutputBuffer_Enable;
+        DAC_Init(activeDacChannel, &dacInit);
+    }
 
     cameraControlRuntime->period = CAMERA_CONTROL_DAC_MAX_CODE;
     cameraControlDacWriteCode(CAMERA_CONTROL_DAC_MAX_CODE);
@@ -296,19 +317,62 @@ static bool cameraControlDacTryInit(void)
 }
 #endif
 
+static void cameraControlStopActiveBackend(void)
+{
+    switch (activeMode) {
+#ifdef CAMERA_CONTROL_SOFTWARE_PWM_AVAILABLE
+    case CAMERA_CONTROL_MODE_SOFTWARE_PWM:
+        cameraControlSoftwarePwmDisable();
+        break;
+#endif
+#ifdef CAMERA_CONTROL_DAC_AVAILABLE
+    case CAMERA_CONTROL_MODE_DAC:
+        ATOMIC_BLOCK(NVIC_PRIO_TIMER) {
+            DAC_Cmd(activeDacChannel, DISABLE);
+        }
+        break;
+#endif
+    default:
+        break;
+    }
+    activeMode = CAMERA_CONTROL_MODES_COUNT;
+}
+
 void cameraControlInitImpl(cameraControlRuntime_t *runtime)
 {
+    cameraControlStopActiveBackend();
     cameraControlRuntime = runtime;
-    activeMode = CAMERA_CONTROL_MODES_COUNT;
 
-    if (!runtime || runtime->io == IO_NONE) {
+    if (!runtime) {
         return;
     }
 
-    cameraControlRuntime->enabled = false;
-    cameraControlRuntime->endTimeMillis = 0;
+    runtime->enabled = false;
+    runtime->endTimeMillis = 0;
+
+    if (runtime->io == IO_NONE) {
+        return;
+    }
 
     switch (cameraControlConfig()->mode) {
+    case CAMERA_CONTROL_MODE_DAC:
+        // Prefer 12-bit hardware DAC when the pin supports it (PA4/PA5), then
+        // fall back to timer-backed hardware PWM, and finally software PWM.
+#ifdef CAMERA_CONTROL_DAC_AVAILABLE
+        if (cameraControlDacTryInit()) {
+            return;
+        }
+#endif
+#if defined(CAMERA_CONTROL_HARDWARE_PWM_AVAILABLE) && defined(USE_PWM_OUTPUT)
+        if (cameraControlHardwarePwmTryInit()) {
+            return;
+        }
+#endif
+#ifdef CAMERA_CONTROL_SOFTWARE_PWM_AVAILABLE
+        cameraControlSoftwarePwmTryInit();
+#endif
+        break;
+
     case CAMERA_CONTROL_MODE_HARDWARE_PWM:
 #if defined(CAMERA_CONTROL_HARDWARE_PWM_AVAILABLE) && defined(USE_PWM_OUTPUT)
         if (cameraControlHardwarePwmTryInit()) {
@@ -330,12 +394,6 @@ void cameraControlInitImpl(cameraControlRuntime_t *runtime)
     case CAMERA_CONTROL_MODE_SOFTWARE_PWM:
 #ifdef CAMERA_CONTROL_SOFTWARE_PWM_AVAILABLE
         cameraControlSoftwarePwmTryInit();
-#endif
-        break;
-
-    case CAMERA_CONTROL_MODE_DAC:
-#ifdef CAMERA_CONTROL_DAC_AVAILABLE
-        cameraControlDacTryInit();
 #endif
         break;
 
@@ -379,7 +437,10 @@ void cameraControlKeyPressImpl(cameraControlKey_e key, timeMs_t holdDurationMs)
     }
 
     const float dutyCycle = calculateKeyPressRatio(key);
-    const timeMs_t holdEndMillis = millis() + cameraControlConfig()->keyDelayMs + holdDurationMs;
+    timeMs_t holdEndMillis = millis() + cameraControlConfig()->keyDelayMs + holdDurationMs;
+    if (holdEndMillis == 0) {
+        holdEndMillis = 1;
+    }
 
     switch (activeMode) {
 #if defined(CAMERA_CONTROL_HARDWARE_PWM_AVAILABLE) && defined(USE_PWM_OUTPUT)

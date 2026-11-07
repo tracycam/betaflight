@@ -63,6 +63,7 @@ static void WS2811_DMA_IRQHandler(dmaChannelDescriptor_t *descriptor)
         if (counter == WS2811_LED_STRIP_LENGTH) {
             // Output low for 50us delay
             memset(ledStripDMABuffer, 0, sizeof(ledStripDMABuffer));
+            ch32DmaBarrier();
             DMA_CLEAR_FLAG(descriptor, DMA_IT_TCIF);
         } else if (counter == (WS2811_LED_STRIP_LENGTH + WS2811_DELAY_ITERATIONS)) {
             counter = 0;
@@ -113,7 +114,8 @@ bool ws2811LedStripHardwareInit(void)
     dmaRef = timerHardware->dmaRef;
 #endif
 
-    if (dmaRef == NULL || !dmaAllocate(dmaGetIdentifier(dmaRef), OWNER_LED_STRIP, 0)) {
+    const dmaIdentifier_e dmaId = dmaGetIdentifier(dmaRef);
+    if (dmaRef == NULL || !dmaAllocate(dmaId, OWNER_LED_STRIP, 0)) {
         return false;
     }
 
@@ -178,8 +180,8 @@ bool ws2811LedStripHardwareInit(void)
 
     TIM_Cmd(timer, ENABLE);
 
-    dmaEnable(dmaGetIdentifier(dmaRef));
-    dmaSetHandler(dmaGetIdentifier(dmaRef), WS2811_DMA_IRQHandler, NVIC_PRIO_WS2811_DMA, 0);
+    dmaEnable(dmaId);
+    dmaSetHandler(dmaId, WS2811_DMA_IRQHandler, NVIC_PRIO_WS2811_DMA, 0);
 
     /* configure DMA */
     xDMA_Cmd(dmaRef, DISABLE);
@@ -206,10 +208,16 @@ bool ws2811LedStripHardwareInit(void)
 #endif
     xDMA_Init(dmaRef, &DMA_InitStructure);
 #if defined(USE_DMA_SPEC)
-    dmaMuxEnable(dmaGetIdentifier(dmaRef), dmaSpec->dmaMuxId);
+    dmaMuxEnable(dmaId, dmaSpec->dmaMuxId);
 #else
     #warning "USE_DMA_SPEC DETECT FAIL IN LEDSTRIP CH32H41x NEED DMA MUX "
 #endif
+    dmaChannelDescriptor_t *descriptor = dmaGetDescriptorByIdentifier(dmaId);
+    if (descriptor) {
+        DMA_CLEAR_FLAG(descriptor, DMA_IT_GLOB | DMA_IT_TCIF | DMA_IT_HTIF | DMA_IT_TEIF);
+        ch32DmaBarrier();
+        NVIC_ClearPendingIRQ(descriptor->irqN);
+    }
     TIM_DMACmd(timer, timerDmaSource(timerHardware->channel), ENABLE);
     xDMA_ITConfig(dmaRef, DMA_IT_TC, ENABLE);
     return true;
@@ -217,11 +225,12 @@ bool ws2811LedStripHardwareInit(void)
 
 void ws2811LedStripStartTransfer(void)
 {
+    TIM_Cmd(timer, DISABLE);
     xDMA_Cmd(dmaRef, DISABLE);
-    xDMA_SetCurrDataCounter(dmaRef, WS2811_DMA_BUFFER_SIZE);  // load number of bytes to be transferred
+    xDMA_SetCurrDataCounter(dmaRef, WS2811_DMA_BUFFER_SIZE);
     TIM_SetCounter(timer, 0);
-    TIM_Cmd(timer, ENABLE);
     ch32DmaBarrier();
     xDMA_Cmd(dmaRef, ENABLE);
+    TIM_Cmd(timer, ENABLE);
 }
 #endif
