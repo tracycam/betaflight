@@ -349,10 +349,9 @@ static void taskTelemetry(timeUs_t currentTimeUs)
 #ifdef USE_CAMERA_CONTROL
 static void taskCameraControl(timeUs_t currentTimeUs)
 {
-    if (ARMING_FLAG(ARMED)) {
-        return;
-    }
-
+    // Always allow an already-active key press to finish and return to idle even
+    // if the craft arms before endTimeMillis elapses; new stick-gesture presses
+    // are gated on !ARMING_FLAG(ARMED) in rc_controls.c and msp.c.
     cameraControlProcess(currentTimeUs);
 }
 #endif

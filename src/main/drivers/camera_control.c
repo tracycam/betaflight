@@ -30,6 +30,7 @@
 #include "drivers/camera_control.h"
 #include "drivers/camera_control_impl.h"
 
+#include "common/time.h"
 #include "drivers/io.h"
 #include "drivers/time.h"
 #include "pg/pg_ids.h"
@@ -42,7 +43,7 @@ PG_REGISTER_WITH_RESET_FN(cameraControlConfig_t, cameraControlConfig, PG_CAMERA_
 
 void pgResetFn_cameraControlConfig(cameraControlConfig_t *cameraControlConfig)
 {
-    cameraControlConfig->mode = CAMERA_CONTROL_MODE_HARDWARE_PWM;
+    cameraControlConfig->mode = DEFAULT_CAMERA_CONTROL_MODE;
     cameraControlConfig->refVoltage = 330;
     cameraControlConfig->keyDelayMs = 180;
     cameraControlConfig->internalResistance = 470;
@@ -72,11 +73,13 @@ void cameraControlInit(void)
 
 void cameraControlProcess(timeUs_t currentTimeUs)
 {
+    UNUSED(currentTimeUs);
+
     if (!cameraControlRuntime.enabled) {
         return;
     }
 
-    if (cameraControlRuntime.endTimeMillis && currentTimeUs / 1000 >= cameraControlRuntime.endTimeMillis) {
+    if (cameraControlRuntime.endTimeMillis && cmpTimeMs(millis(), cameraControlRuntime.endTimeMillis) >= 0) {
         // Key press duration ended, return to idle state
         cameraControlProcessImpl();
         cameraControlRuntime.endTimeMillis = 0;
