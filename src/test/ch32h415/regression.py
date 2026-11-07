@@ -1,3 +1,22 @@
+# This file is part of Betaflight.
+#
+# Betaflight is free software. You can redistribute this software
+# and/or modify this software under the terms of the GNU General
+# Public License as published by the Free Software Foundation,
+# either version 3 of the License, or (at your option) any later
+# version.
+#
+# Betaflight is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public
+# License along with this software.
+#
+# If not, see <http://www.gnu.org/licenses/>.
+
 from pathlib import Path
 import subprocess
 import tempfile
@@ -671,7 +690,7 @@ typedef int serialPort_t;
 static struct { uint32_t txAt; } vcpPort;
 static uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
 static uint8_t ep_tx_busy_flag;
-static bool usbHostPortOpen, usbZlpPending, configured;
+static bool usbHostPortOpen, usbZlpPending, usbTxStalled, configured;
 static bool usbIsConfigured(void) { return configured; }
 ''' + fn(usb,'static bool isUsbVcpTransmitBufferEmpty(') + '''
 int main(void) {
@@ -721,6 +740,7 @@ for mps in (64, 512):
 #define APP_TX_DATA_SIZE 8192
 #define APP_TX_BLOCK_SIZE 512
 #define CDC_MAX_MPS TEST_MPS
+#define USB_VCP_BULK_IN_MPS CDC_MAX_MPS
 static uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
 static uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
 static uint8_t ep_tx_busy_flag;
@@ -761,6 +781,7 @@ pre='''
 #define APP_TX_DATA_SIZE 8192
 #define APP_TX_BLOCK_SIZE 512
 #define CDC_MAX_MPS 64
+#define USB_VCP_BULK_IN_MPS CDC_MAX_MPS
 static volatile uint32_t now_ms,UserTxBufPtrIn,UserTxBufPtrOut,lastBuffsize;
 static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE],ep_tx_busy_flag;
 static volatile bool usbZlpPending,usbTxStalled;
@@ -985,14 +1006,20 @@ run('boot_button_sdi', '''
 #define GPIO_Pin_8 (1u << 8)
 #define GPIO_Speed_Medium 1
 #define GPIO_Mode_IPD 2
+#define RCC_HB2Periph_GPIOC 16
+#define ENABLE 1
 typedef uint32_t timeUs_t;
 typedef struct { unsigned GPIO_Pin, GPIO_Speed, GPIO_Mode; } GPIO_InitTypeDef;
 typedef struct { unsigned INDR; } gpio_t;
 static gpio_t port;
 #define GPIOC (&port)
-static unsigned initCount, tasks, handoffs;
+static unsigned initCount, clockCount, tasks, handoffs;
+static void RCC_HB2PeriphClockCmd(unsigned periph, int state) {
+    if (periph != RCC_HB2Periph_GPIOC || state != ENABLE || initCount != 0) abort();
+    clockCount++;
+}
 static void GPIO_Init(gpio_t *p, GPIO_InitTypeDef *g) {
-    if (p != GPIOC || g->GPIO_Pin != GPIO_Pin_8 || g->GPIO_Mode != GPIO_Mode_IPD) abort();
+    if (p != GPIOC || g->GPIO_Pin != GPIO_Pin_8 || g->GPIO_Mode != GPIO_Mode_IPD || clockCount != 1) abort();
     initCount++;
 }
 static void taskSystemLoad(timeUs_t t) { (void)t; tasks++; }
@@ -1740,6 +1767,7 @@ run('usb_vcp_chained_16k_throughput', '''
 #define TX_BUFFER_SIZE 512
 #define CDC_IN_EP 0x82
 #define CDC_MAX_MPS 64
+#define USB_VCP_BULK_IN_MPS CDC_MAX_MPS
 typedef uint32_t timeUs_t;
 typedef int serialPort_t;
 static struct { uint32_t txAt; } vcpPort;
@@ -1823,6 +1851,7 @@ run('usb_vcp_ep_start_write_fail_recovery', '''
 #define TX_BUFFER_SIZE 512
 #define CDC_IN_EP 0x82
 #define CDC_MAX_MPS 64
+#define USB_VCP_BULK_IN_MPS CDC_MAX_MPS
 static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
 static volatile uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
 static volatile uint8_t ep_tx_busy_flag;
@@ -2150,7 +2179,9 @@ run('usb_vcp_suspend_and_stall_latch', '''
 #define TX_BUFFER_SIZE 512
 #define CDC_IN_EP 0x82
 #define CDC_OUT_EP 0x02
-#define CDC_MAX_MPS 64
+#define CDC_MAX_MPS 512
+#define USB_VCP_BULK_IN_MPS CDC_MAX_MPS
+#define USB_VCP_OUT_MPS(busid) ((void)(busid), (uint16_t)CDC_MAX_MPS)
 #define CTRL_LINE_STATE_DTR 1
 enum {
     USBD_EVENT_RESET = 1,
@@ -2161,7 +2192,9 @@ enum {
     USBD_EVENT_CONFIGURED = 7,
     USBD_EVENT_SET_REMOTE_WAKEUP = 9,
     USBD_EVENT_CLR_REMOTE_WAKEUP = 10,
-    USBD_EVENT_UNKNOWN = 13,
+    USBD_EVENT_INIT = 11,
+    USBD_EVENT_DEINIT = 12,
+    USBD_EVENT_UNKNOWN = 14,
 };
 typedef uint32_t timeUs_t;
 typedef int serialPort_t;
@@ -2169,7 +2202,7 @@ static struct { uint32_t txAt; } vcpPort;
 static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
 static volatile uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
 static volatile bool usbZlpPending, usbTxStalled, usbHostPortOpen;
-static volatile uint8_t ep_tx_busy_flag, usbd_cdc_info = USBD_EVENT_UNKNOWN, ep_rx_finish, cdc_configured;
+static volatile uint8_t ep_tx_busy_flag, usbd_cdc_info = USBD_EVENT_UNKNOWN, cdc_configured, cdc_connected, rx_ep_paused;
 static volatile uint16_t rx_head, rx_tail;
 static uint8_t usb_drivers_buffer[CDC_MAX_MPS], write_buffer[TX_BUFFER_SIZE];
 static void (*ctrlLineStateCb)(void *, uint16_t);
@@ -3315,3 +3348,208 @@ int main(void) {
     puts("USBHS toggle mismatch, EP0 DMA/stall safety, 512B CBW guard, BOT Reset-Recovery/Abort-IN, VERIFY(10), and 0-block media verified");
 }
 ''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/ch32h41x_hs'), '-I' + str(root / 'lib/main/CH32H41x/middlewares/class/msc')))
+
+run('usb_vcp_cold_boot_fs_mps_and_rx_nak', '''
+#define UNUSED(x) ((void)(x))
+#define ARRAYLEN(x) (sizeof(x) / sizeof((x)[0]))
+#define NVIC_PRIO_USB 0
+#define ATOMIC_BLOCK(x) for (int once = 1; once; once = 0)
+#define USB_TIMEOUT 50
+#define APP_TX_DATA_SIZE 8192
+#define APP_TX_BLOCK_SIZE 512
+#define RX_BUFFER_SIZE 2048
+#define TX_BUFFER_SIZE 512
+#define CDC_IN_EP 0x82
+#define CDC_OUT_EP 0x02
+#define CDC_INT_EP 0x83
+#define CDC_MAX_MPS 512
+#define USBD_VID 0x1A86
+#define USBD_PID 0xE204
+#define USBD_MAX_POWER 100
+#define USBD_PRODUCT_STRING "Betaflight CH32H41x"
+#define CTRL_LINE_STATE_DTR 1
+static uint32_t uid0 = 0x12345678u, uid1 = 0x9ABCDEF0u, uid2 = 0x0FEDCBA9u;
+#define U_ID_0 uid0
+#define U_ID_1 uid1
+#define U_ID_2 uid2
+
+#include "usb_util.h"
+#include "usb_def.h"
+#include "usbd_cdc.h"
+#define USB_CONFIG_SIZE (9 + CDC_DESCRIPTOR_LEN)
+
+enum {
+    USBD_EVENT_RESET = 1,
+    USBD_EVENT_CONNECTED = 3,
+    USBD_EVENT_DISCONNECTED = 4,
+    USBD_EVENT_SUSPEND = 5,
+    USBD_EVENT_RESUME = 6,
+    USBD_EVENT_CONFIGURED = 7,
+    USBD_EVENT_SET_REMOTE_WAKEUP = 9,
+    USBD_EVENT_CLR_REMOTE_WAKEUP = 10,
+    USBD_EVENT_INIT = 11,
+    USBD_EVENT_DEINIT = 12,
+    USBD_EVENT_UNKNOWN = 14,
+};
+
+typedef uint32_t timeUs_t;
+typedef struct { int dummy; } serialPort_t;
+static struct { uint32_t txAt; } vcpPort;
+static volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
+static volatile uint32_t UserTxBufPtrIn, UserTxBufPtrOut, lastBuffsize;
+static volatile bool usbZlpPending, usbTxStalled, usbHostPortOpen;
+static volatile uint8_t ep_tx_busy_flag, usbd_cdc_info = USBD_EVENT_UNKNOWN, cdc_configured, cdc_connected, rx_ep_paused;
+static volatile uint16_t rx_head, rx_tail;
+static uint8_t usb_drivers_buffer[CDC_MAX_MPS], read_buffer[RX_BUFFER_SIZE], write_buffer[TX_BUFFER_SIZE];
+static void (*ctrlLineStateCb)(void *, uint16_t);
+static void *ctrlLineStateCbContext;
+static void (*baudRateCb)(void *, uint32_t);
+static void *baudRateCbContext;
+static void (*serialBaudRateCb)(serialPort_t *, uint32_t);
+
+static uint16_t simEpMps = 64;
+static bool readArmed;
+static uint32_t lastReadMps, zlpSent, dataSent;
+static uint16_t usbd_get_ep_mps(uint8_t busid, uint8_t ep) { (void)busid; (void)ep; return simEpMps; }
+static int usbd_ep_start_read(uint8_t busid, const uint8_t ep, uint8_t *data, uint32_t len) {
+    (void)busid; (void)data;
+    if (ep != CDC_OUT_EP || readArmed) return -1;
+    readArmed = true;
+    lastReadMps = len;
+    return 0;
+}
+static int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *data, uint32_t len) {
+    (void)busid; (void)ep; (void)data;
+    if (len == 0) zlpSent++; else dataSent++;
+    return 0;
+}
+
+static const uint8_t config_descriptor_hs[] = {
+    USB_CONFIG_DESCRIPTOR_INIT(USB_CONFIG_SIZE, 0x02, 0x01, USB_CONFIG_BUS_POWERED, USBD_MAX_POWER),
+    CDC_DESCRIPTOR_INIT(0x00, CDC_INT_EP, CDC_OUT_EP, CDC_IN_EP, USB_BULK_EP_MPS_HS, 0x04)
+};
+static const uint8_t config_descriptor_fs[] = {
+    USB_CONFIG_DESCRIPTOR_INIT(USB_CONFIG_SIZE, 0x02, 0x01, USB_CONFIG_BUS_POWERED, USBD_MAX_POWER),
+    CDC_DESCRIPTOR_INIT(0x00, CDC_INT_EP, CDC_OUT_EP, CDC_IN_EP, USB_BULK_EP_MPS_FS, 0x04)
+};
+static const uint8_t other_speed_descriptor_hs[] = {
+    USB_OTHER_SPEED_CONFIG_DESCRIPTOR_INIT(USB_CONFIG_SIZE, 0x02, 0x01, USB_CONFIG_BUS_POWERED, USBD_MAX_POWER),
+    CDC_DESCRIPTOR_INIT(0x00, CDC_INT_EP, CDC_OUT_EP, CDC_IN_EP, USB_BULK_EP_MPS_FS, 0x04)
+};
+static const uint8_t other_speed_descriptor_fs[] = {
+    USB_OTHER_SPEED_CONFIG_DESCRIPTOR_INIT(USB_CONFIG_SIZE, 0x02, 0x01, USB_CONFIG_BUS_POWERED, USBD_MAX_POWER),
+    CDC_DESCRIPTOR_INIT(0x00, CDC_INT_EP, CDC_OUT_EP, CDC_IN_EP, USB_BULK_EP_MPS_HS, 0x04)
+};
+static char cdcSerialString[25];
+static const char *const string_descriptors[] = {
+    (const char[]){ 0x09, 0x04 }, "Betaflight", USBD_PRODUCT_STRING, NULL, "WCH HS Virtual COM Port",
+};
+void usbVcpResetState(void);
+void usbVcpTxDoneISR(void);
+uint16_t usb_vcp_send_data(uint8_t busid, uint8_t *buffer, uint16_t len);
+''' + fn('src/platform/CH32/usb_ch32h41x.h', 'static inline const char *ch32UsbGetUidSerialString(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static const uint8_t *config_descriptor_callback(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static const uint8_t *other_speed_descriptor_callback(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static const char *string_descriptor_callback(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static uint16_t usbVcpOutMps(')
+    + '#define USB_VCP_OUT_MPS(busid) (usbVcpOutMps(busid))\n'
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static uint16_t usbVcpRxUsedLocked(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static uint16_t usbVcpRxFreeLocked(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static void usbd_event_handler(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_out(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_rx_available(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_get_rx_data(')
+    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
+    + fn(usb, 'static uint16_t usbVcpBulkInMps(')
+    + '#define USB_VCP_BULK_IN_MPS (usbVcpBulkInMps())\n'
+    + fn(usb, 'void CDC_SetBaudRateCb(')
+    + fn(usb, 'void usbVcpBaudRateChanged(')
+    + fn(usb, 'uint8_t usbIsConnected(void)')
+    + fn(usb, 'uint8_t usbIsConfigured(void)')
+    + fn(usb, 'uint8_t usbVcpIsConnected(void)')
+    + fn(usb, 'uint8_t usbVcpIsActive(void)')
+    + fn(usb, 'void usbVcpResetState(void)')
+    + fn(usb, 'static void usbVcpKickTx(void)')
+    + fn(usb, 'void usbVcpTxDoneISR(void)')
+    + fn(usb, 'static void usbVcpSerialBaudRateTrampoline(')
+    + fn(usb, 'static void usbVcpSetBaudRateCb(') + '''
+static serialPort_t *seenPort;
+static uint32_t seenTypedBaud;
+static void onSerialBaud(serialPort_t *ctx, uint32_t baud) { seenPort = ctx; seenTypedBaud = baud; }
+
+static uint16_t descBulkMps(const uint8_t *p) {
+    uint32_t total = p[2] | ((uint32_t)p[3] << 8);
+    uint32_t off = 0;
+    while (off + 7 <= total && p[off] != 0) {
+        if (p[off + 1] == USB_DESCRIPTOR_TYPE_ENDPOINT && p[off + 2] == CDC_OUT_EP) {
+            return (uint16_t)(p[off + 4] | ((uint16_t)p[off + 5] << 8));
+        }
+        off += p[off];
+    }
+    return 0;
+}
+
+int main(void) {
+    /* 1. Cold LiPo boot without USB cable: INIT + idle SUSPEND/RESUME must keep usbVcpIsConnected() == 0 */
+    if (usbVcpIsConnected() || usbVcpIsActive()) return 1;
+    usbd_event_handler(0, USBD_EVENT_INIT);
+    usbd_event_handler(0, USBD_EVENT_SUSPEND);
+    usbd_event_handler(0, USBD_EVENT_RESUME);
+    if (usbVcpIsConnected() || usbVcpIsActive()) return 2;
+
+    /* 2. Host cable connected at Full-Speed (64B MPS): RESET marks connected, CONFIGURED arms 64B OUT & 64B ZLP */
+    simEpMps = 64;
+    readArmed = false;
+    usbd_event_handler(0, USBD_EVENT_RESET);
+    if (!usbVcpIsConnected() || usbVcpIsActive()) return 3;
+    usbd_event_handler(0, USBD_EVENT_CONFIGURED);
+    if (!usbVcpIsConnected() || !usbVcpIsActive() || !readArmed || lastReadMps != 64) return 4;
+    UserTxBufPtrIn = 64;
+    usbVcpKickTx();
+    if (dataSent != 1 || zlpSent != 0) return 5;
+    usbd_cdc_acm_bulk_in(0, CDC_IN_EP, 64);
+    if (zlpSent != 1) return 6;
+
+    /* 3. Speed-aware config/other-speed descriptors + 24-hex UID serial + UBSan-clean baud trampoline */
+    const uint8_t *cfgHs = config_descriptor_callback(USB_SPEED_HIGH);
+    const uint8_t *cfgFs = config_descriptor_callback(USB_SPEED_FULL);
+    const uint8_t *othHs = other_speed_descriptor_callback(USB_SPEED_HIGH);
+    const uint8_t *othFs = other_speed_descriptor_callback(USB_SPEED_FULL);
+    if (descBulkMps(cfgHs) != 512 || descBulkMps(cfgFs) != 64) return 7;
+    if (othHs[1] != USB_DESCRIPTOR_TYPE_OTHER_SPEED || descBulkMps(othHs) != 64) return 8;
+    if (othFs[1] != USB_DESCRIPTOR_TYPE_OTHER_SPEED || descBulkMps(othFs) != 512) return 9;
+    const char *ser = string_descriptor_callback(USB_SPEED_HIGH, USB_STRING_SERIAL_INDEX);
+    if (!ser || strcmp(ser, "123456789ABCDEF00FEDCBA9") != 0) return 10;
+    serialPort_t portObj = { .dummy = 42 };
+    usbVcpSetBaudRateCb(&portObj, onSerialBaud, &portObj);
+    usbVcpBaudRateChanged(921600);
+    if (seenPort != &portObj || seenTypedBaud != 921600) return 11;
+
+    /* 4. Lossless Bulk-OUT NAK backpressure across 4096B (2x RX_BUFFER_SIZE) under HS 512B bursts */
+    simEpMps = 512;
+    readArmed = false;
+    usbd_event_handler(0, USBD_EVENT_CONFIGURED);
+    if (!readArmed || lastReadMps != 512) return 12;
+    uint8_t src[4096], dst[4096];
+    for (uint32_t i = 0; i < sizeof(src); i++) src[i] = (uint8_t)((i * 73u + 19u) & 0xFFu);
+    uint32_t txOff = 0, rxOff = 0, pausesSeen = 0;
+    while (rxOff < sizeof(dst)) {
+        while (readArmed && txOff < sizeof(src)) {
+            uint32_t n = sizeof(src) - txOff;
+            if (n > 512) n = 512;
+            readArmed = false;
+            memcpy(usb_drivers_buffer, &src[txOff], n);
+            txOff += n;
+            usbd_cdc_acm_bulk_out(0, CDC_OUT_EP, n);
+            if (!readArmed) pausesSeen++;
+        }
+        uint16_t got = usb_vcp_get_rx_data(0, &dst[rxOff], 200);
+        if (got == 0) return 13;
+        rxOff += got;
+    }
+    if (pausesSeen == 0 || memcmp(src, dst, sizeof(src)) != 0 || usb_vcp_rx_available() != 0) return 14;
+
+    puts("cold-boot VCP disconnect state, FS/HS descriptors & ZLP, UID serial, baud trampoline, and lossless RX NAK backpressure verified");
+}
+''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/common'), '-I' + str(root / 'lib/main/CH32H41x/middlewares/class/cdc')))

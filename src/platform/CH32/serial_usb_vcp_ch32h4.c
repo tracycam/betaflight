@@ -33,61 +33,54 @@
 
 #include "drivers/io.h"
 #include "drivers/usb_io.h"
+#include "drivers/time.h"
+#include "drivers/serial.h"
+#include "drivers/serial_usb_vcp.h"
+#include "drivers/nvic.h"
 
 #include "pg/usb.h"
 
-#include "ch32_debug.h"
 #include "cdc_vcp_ch32h41x.h"
 #include "usb_ch32h41x.h"
 #include "usbd_core.h"
 #include "usbd_cdc_acm.h"
 #include "usb_ch32h41x_usbhs_reg.h"
 
-#include "drivers/time.h"
-#include "drivers/serial.h"
-#include "drivers/serial_usb_vcp.h"
-#include "drivers/nvic.h"
-
-#define USB_TIMEOUT  50
-
-static vcpPort_t vcpPort = { 0 };
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
-#include "target/CH32H415/boot_sdi.h"
+#ifdef USE_CH32_USB_SDI_HANDOFF
+#include "platform/usb_sdi_handoff.h"
 static bool usbCoreInitialized;
 static bool usbReleasedForDebug;
 #endif
 
-// #define APP_RX_DATA_SIZE  2048
+#define USB_TIMEOUT       50
 #define APP_TX_DATA_SIZE  8192
-
 #define APP_TX_BLOCK_SIZE 512
 
-// volatile uint8_t UserRxBuffer[APP_RX_DATA_SIZE];/* Received Data over USB are stored in this buffer */
-volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];/* Received Data over UART (CDC interface) are stored in this buffer */
-uint32_t BuffLength;
+static vcpPort_t vcpPort = { 0 };
 
-/* Increment this pointer or roll it back to start address when data are received over USART */
+volatile uint8_t UserTxBuffer[APP_TX_DATA_SIZE];
 volatile uint32_t UserTxBufPtrIn = 0;
-/* Increment this pointer or roll it back to start address when data are sent over USB */
 volatile uint32_t UserTxBufPtrOut = 0;
 static volatile uint32_t lastBuffsize = 0;
 static volatile bool usbZlpPending;
 static volatile bool usbTxStalled;
 static volatile bool usbHostPortOpen;
 
-// volatile uint32_t APP_Rx_ptr_out = 0;
-// volatile uint32_t APP_Rx_ptr_in = 0;
-// static uint8_t APP_Rx_Buffer[APP_RX_DATA_SIZE];
-
-
-// #define  CDC_POLLING_INTERVAL 5
-
-
-
 static void (*ctrlLineStateCb)(void *context, uint16_t ctrlLineState);
 static void *ctrlLineStateCbContext;
 static void (*baudRateCb)(void *context, uint32_t baud);
 static void *baudRateCbContext;
+static void (*serialBaudRateCb)(serialPort_t *context, uint32_t baud);
+
+static uint16_t usbVcpBulkInMps(void)
+{
+    const uint16_t mps = usbd_get_ep_mps(0, CDC_IN_EP);
+    return (mps != 0) ? mps : CDC_MAX_MPS;
+}
+
+#ifndef USB_VCP_BULK_IN_MPS
+#define USB_VCP_BULK_IN_MPS (usbVcpBulkInMps())
+#endif
 
 void CDC_SetBaudRateCb(void (*cb)(void *context, uint32_t baud), void *context)
 {
@@ -123,10 +116,9 @@ void usbVcpControlLineStateChanged(uint16_t state)
     }
 }
 
-
 uint8_t usbIsConnected(void)
 {
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+#ifdef USE_CH32_USB_SDI_HANDOFF
     if (usbReleasedForDebug) {
         return false;
     }
@@ -136,7 +128,7 @@ uint8_t usbIsConnected(void)
 
 uint8_t usbIsConfigured(void)
 {
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+#ifdef USE_CH32_USB_SDI_HANDOFF
     if (usbReleasedForDebug) {
         return false;
     }
@@ -171,11 +163,12 @@ static void usbVcpKickTx(void)
     ATOMIC_BLOCK(NVIC_PRIO_USB) {
         if (ep_tx_busy_flag == 0 && usbIsConfigured()) {
             if (lastBuffsize) {
+                const uint16_t bulkInMps = USB_VCP_BULK_IN_MPS;
                 uint32_t nextOut = UserTxBufPtrOut + lastBuffsize;
                 if (nextOut >= APP_TX_DATA_SIZE) {
                     nextOut -= APP_TX_DATA_SIZE;
                 }
-                if ((lastBuffsize % CDC_MAX_MPS) == 0 && nextOut == UserTxBufPtrIn) {
+                if ((lastBuffsize % bulkInMps) == 0 && nextOut == UserTxBufPtrIn) {
                     usbZlpPending = true;
                 }
                 UserTxBufPtrOut = nextOut;
@@ -262,8 +255,18 @@ uint32_t CDC_Send_DATA(const uint8_t *ptrBuffer, uint32_t sendLength)
                 return offset;
             }
             if (micros() - startedAt >= USB_TIMEOUT * 1000) {
-                usbTxStalled = true;
-                return offset;
+                bool shouldStall = false;
+                ATOMIC_BLOCK(NVIC_PRIO_USB) {
+                    const uint32_t freeBytes =
+                        ((UserTxBufPtrOut - UserTxBufPtrIn) + (-((int)(UserTxBufPtrOut <= UserTxBufPtrIn)) & APP_TX_DATA_SIZE)) - 1;
+                    if (freeBytes == 0 && (ep_tx_busy_flag != 0 || lastBuffsize != 0 || usbZlpPending)) {
+                        usbTxStalled = true;
+                        shouldStall = true;
+                    }
+                }
+                if (shouldStall) {
+                    return offset;
+                }
             }
             delay(1);
         }
@@ -271,8 +274,6 @@ uint32_t CDC_Send_DATA(const uint8_t *ptrBuffer, uint32_t sendLength)
 
     return sendLength;
 }
-
-
 
 static void usbVcpSetBaudRate(serialPort_t *instance, uint32_t baudRate)
 {
@@ -286,18 +287,26 @@ static void usbVcpSetMode(serialPort_t *instance, portMode_e mode)
     UNUSED(mode);
 }
 
-static void usbVcpSetCtrlLineStateCb(serialPort_t *instance, void (*cb)(void *context,
-                                                                        uint16_t ctrlLineState), void *context)
+static void usbVcpSetCtrlLineStateCb(serialPort_t *instance, void (*cb)(void *context, uint16_t ctrlLineState), void *context)
 {
     UNUSED(instance);
-    CDC_SetCtrlLineStateCb((void (*)(void *context, uint16_t ctrlLineState))cb, context);
+    CDC_SetCtrlLineStateCb(cb, context);
 }
 
-static void usbVcpSetBaudRateCb(serialPort_t *instance, void (*cb)(serialPort_t *context,
-                                                                   uint32_t baud), serialPort_t *context)
+static void usbVcpSerialBaudRateTrampoline(void *context, uint32_t baud)
+{
+    if (serialBaudRateCb) {
+        serialBaudRateCb((serialPort_t *)context, baud);
+    }
+}
+
+static void usbVcpSetBaudRateCb(serialPort_t *instance, void (*cb)(serialPort_t *context, uint32_t baud), serialPort_t *context)
 {
     UNUSED(instance);
-    CDC_SetBaudRateCb((void (*)(void *context, uint32_t baud))cb, (void *)context);
+    ATOMIC_BLOCK(NVIC_PRIO_USB) {
+        serialBaudRateCb = cb;
+        CDC_SetBaudRateCb(cb ? usbVcpSerialBaudRateTrampoline : NULL, context);
+    }
 }
 
 static bool isUsbVcpTransmitBufferEmpty(const serialPort_t *instance)
@@ -305,7 +314,7 @@ static bool isUsbVcpTransmitBufferEmpty(const serialPort_t *instance)
     UNUSED(instance);
     bool empty;
     ATOMIC_BLOCK(NVIC_PRIO_USB) {
-        empty = !usbIsConfigured() || !usbHostPortOpen ||
+        empty = !usbIsConfigured() || !usbHostPortOpen || usbTxStalled ||
             (!vcpPort.txAt && UserTxBufPtrOut == UserTxBufPtrIn && !lastBuffsize && !usbZlpPending && !ep_tx_busy_flag);
     }
     return empty;
@@ -314,40 +323,17 @@ static bool isUsbVcpTransmitBufferEmpty(const serialPort_t *instance)
 static uint32_t usbVcpAvailable(const serialPort_t *instance)
 {
     UNUSED(instance);
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+#ifdef USE_CH32_USB_SDI_HANDOFF
     if (usbReleasedForDebug) {
         return 0;
     }
 #endif
-
-//     uint32_t available = APP_Rx_ptr_in-APP_Rx_ptr_out;
-
-//     // Return the sum of the bytes in the APP_Rx_Buffer buffer and those received by the VCP driver
-//   if(ep_rx_finish == 1)
-//     {
-//         available += ep_rx_length;
-//     }
-
-//     return available;
-
-    return usb_vcp_rx_available( );
+    return usb_vcp_rx_available();
 }
 
 static uint8_t usbVcpRead(serialPort_t *instance)
 {
     UNUSED(instance);
-
-//    if ((APP_Rx_ptr_in == 0) || (APP_Rx_ptr_out == APP_Rx_ptr_in))
-//    {
-//         APP_Rx_ptr_out = 0;
-//         APP_Rx_ptr_in = usb_vcp_get_rx_data(0, APP_Rx_Buffer);
-//         if(APP_Rx_ptr_in == 0) {
-//             // We've drained the input buffer
-//             return 0;
-//         }
-//     }
-//     return APP_Rx_Buffer[APP_Rx_ptr_out++];
-
     uint8_t buf[1];
     if (usb_vcp_get_rx_data(0, buf, 1)) {
         return buf[0];
@@ -402,6 +388,7 @@ static bool usbVcpFlush(vcpPort_t *port)
     }
     return count == 0;
 }
+
 static void usbVcpWrite(serialPort_t *instance, uint8_t c)
 {
     vcpPort_t *port = container_of(instance, vcpPort_t, port);
@@ -456,7 +443,7 @@ void usbVcpInit(void)
 
     usb_rxsof_handler = usb_int_rxsof_handler;
     cdc_acm_init(0, 0);
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+#ifdef USE_CH32_USB_SDI_HANDOFF
     usbCoreInitialized = true;
 #endif
 
@@ -464,7 +451,7 @@ void usbVcpInit(void)
     NVIC_EnableIRQ(USBHS_IRQn);
 }
 
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+#ifdef USE_CH32_USB_SDI_HANDOFF
 void ch32h415UsbMarkCoreInitialized(void)
 {
     usbCoreInitialized = true;
@@ -501,7 +488,6 @@ void ch32h415UsbReleaseForDebug(void)
 }
 #endif
 
-
 serialPort_t *usbVcpOpen(void)
 {
     vcpPort_t *s = &vcpPort;
@@ -514,4 +500,5 @@ uint32_t usbVcpGetBaudRate(serialPort_t *instance)
     UNUSED(instance);
     return cdc_vcp_line_coding.dwDTERate;
 }
-#endif
+
+#endif /* USE_VCP */

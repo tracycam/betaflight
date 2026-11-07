@@ -59,6 +59,9 @@
 #ifndef USE_PLATFORM_SYSTEM_LOAD_TASK
 #define USE_PLATFORM_SYSTEM_LOAD_TASK
 #endif
+#ifndef USE_CH32_USB_SDI_HANDOFF
+#define USE_CH32_USB_SDI_HANDOFF
+#endif
 #endif
 
 #ifndef USE_UART1

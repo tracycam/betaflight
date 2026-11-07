@@ -43,8 +43,8 @@
 #include "usbd_core.h"
 #include "usbd_msc.h"
 
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
-#include "target/CH32H415/boot_sdi.h"
+#if defined(USE_CH32_USB_SDI_HANDOFF) && defined(USE_VCP)
+#include "platform/usb_sdi_handoff.h"
 #endif
 
 #define MSC_IN_EP           0x81
@@ -53,12 +53,6 @@
 #define USBD_MSC_PID        0xE205
 #define USBD_MSC_MAX_POWER  100
 #define MSC_USB_CONFIG_SIZE (9 + MSC_DESCRIPTOR_LEN)
-
-#ifdef CONFIG_USB_HS
-#define MSC_MAX_MPS         512
-#else
-#define MSC_MAX_MPS         64
-#endif
 
 #define MSC_SD_INIT_TIMEOUT_MS 2000
 #define MSC_SD_IO_TIMEOUT_MS   1000
@@ -220,24 +214,37 @@ static const uint8_t mscDeviceDescriptor[] = {
     USB_DEVICE_DESCRIPTOR_INIT(USB_2_0, 0x00, 0x00, 0x00, USBD_MSC_VID, USBD_MSC_PID, 0x0100, 0x01)
 };
 
-static const uint8_t mscConfigDescriptor[] = {
+static const uint8_t mscConfigDescriptorHs[] = {
     USB_CONFIG_DESCRIPTOR_INIT(MSC_USB_CONFIG_SIZE, 0x01, 0x01, USB_CONFIG_BUS_POWERED, USBD_MSC_MAX_POWER),
-    MSC_DESCRIPTOR_INIT(0x00, MSC_OUT_EP, MSC_IN_EP, MSC_MAX_MPS, 0x04)
+    MSC_DESCRIPTOR_INIT(0x00, MSC_OUT_EP, MSC_IN_EP, USB_BULK_EP_MPS_HS, 0x04)
+};
+
+static const uint8_t mscConfigDescriptorFs[] = {
+    USB_CONFIG_DESCRIPTOR_INIT(MSC_USB_CONFIG_SIZE, 0x01, 0x01, USB_CONFIG_BUS_POWERED, USBD_MSC_MAX_POWER),
+    MSC_DESCRIPTOR_INIT(0x00, MSC_OUT_EP, MSC_IN_EP, USB_BULK_EP_MPS_FS, 0x04)
+};
+
+static const uint8_t mscOtherSpeedDescriptorHs[] = {
+    USB_OTHER_SPEED_CONFIG_DESCRIPTOR_INIT(MSC_USB_CONFIG_SIZE, 0x01, 0x01, USB_CONFIG_BUS_POWERED, USBD_MSC_MAX_POWER),
+    MSC_DESCRIPTOR_INIT(0x00, MSC_OUT_EP, MSC_IN_EP, USB_BULK_EP_MPS_FS, 0x04)
+};
+
+static const uint8_t mscOtherSpeedDescriptorFs[] = {
+    USB_OTHER_SPEED_CONFIG_DESCRIPTOR_INIT(MSC_USB_CONFIG_SIZE, 0x01, 0x01, USB_CONFIG_BUS_POWERED, USBD_MSC_MAX_POWER),
+    MSC_DESCRIPTOR_INIT(0x00, MSC_OUT_EP, MSC_IN_EP, USB_BULK_EP_MPS_HS, 0x04)
 };
 
 static const uint8_t mscDeviceQualifierDescriptor[] = {
-    0x0a, USB_DESCRIPTOR_TYPE_DEVICE_QUALIFIER,
-    0x00, 0x02,
-    0x00, 0x00,
-    0x00, 0x40,
-    0x01, 0x00,
+    USB_DEVICE_QUALIFIER_DESCRIPTOR_INIT(USB_2_0, 0x00, 0x00, 0x00, 0x01)
 };
+
+static char mscSerialString[25];
 
 static const char *const mscStringDescriptors[] = {
     (const char[]){ 0x09, 0x04 },
     "Betaflight",
     USBD_PRODUCT_STRING,
-    "202604150001",
+    NULL,
     "Betaflight MSC",
 };
 
@@ -249,8 +256,7 @@ static const uint8_t *mscDeviceDescriptorCb(uint8_t speed)
 
 static const uint8_t *mscConfigDescriptorCb(uint8_t speed)
 {
-    UNUSED(speed);
-    return mscConfigDescriptor;
+    return (speed == USB_SPEED_HIGH) ? mscConfigDescriptorHs : mscConfigDescriptorFs;
 }
 
 static const uint8_t *mscDeviceQualifierDescriptorCb(uint8_t speed)
@@ -259,11 +265,19 @@ static const uint8_t *mscDeviceQualifierDescriptorCb(uint8_t speed)
     return mscDeviceQualifierDescriptor;
 }
 
+static const uint8_t *mscOtherSpeedDescriptorCb(uint8_t speed)
+{
+    return (speed == USB_SPEED_HIGH) ? mscOtherSpeedDescriptorHs : mscOtherSpeedDescriptorFs;
+}
+
 static const char *mscStringDescriptorCb(uint8_t speed, uint8_t index)
 {
     UNUSED(speed);
     if (index >= ARRAYLEN(mscStringDescriptors)) {
         return NULL;
+    }
+    if (index == USB_STRING_SERIAL_INDEX) {
+        return ch32UsbGetUidSerialString(mscSerialString);
     }
     return mscStringDescriptors[index];
 }
@@ -272,6 +286,7 @@ static const struct usb_descriptor mscDescriptor = {
     .device_descriptor_callback = mscDeviceDescriptorCb,
     .config_descriptor_callback = mscConfigDescriptorCb,
     .device_quality_descriptor_callback = mscDeviceQualifierDescriptorCb,
+    .other_speed_descriptor_callback = mscOtherSpeedDescriptorCb,
     .string_descriptor_callback = mscStringDescriptorCb,
 };
 
@@ -392,7 +407,7 @@ uint8_t mscStart(void)
     usbd_msc_set_readonly(0, readOnly);
     usbd_initialize(0, 0, usbdMscEventHandler);
 
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+#if defined(USE_CH32_USB_SDI_HANDOFF) && defined(USE_VCP)
     ch32h415UsbMarkCoreInitialized();
 #endif
 
@@ -404,7 +419,7 @@ uint8_t mscStart(void)
 
 void mscTask(void)
 {
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
+#if defined(USE_CH32_USB_SDI_HANDOFF) && defined(USE_VCP)
     ch32h415BootSdiPoll(micros());
     if (ch32h415UsbIsReleasedForDebug()) {
         return;

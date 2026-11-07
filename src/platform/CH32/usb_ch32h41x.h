@@ -64,7 +64,9 @@ static inline bool ch32UsbHsPhyInit(void)
     IOInit(IOGetByTag(IO_TAG(PB8)), OWNER_USB, 0);
     IOInit(IOGetByTag(IO_TAG(PB9)), OWNER_USB, 0);
 
+#ifdef USE_VCP
     usbGenerateDisconnectPulse();
+#endif
 
     if ((RCC->PLLCFGR & RCC_SYSPLL_SEL) != RCC_SYSPLL_USBHS) {
         uint32_t pllRefer = RCC_USBHSPLLRefer_25M;
@@ -87,4 +89,19 @@ static inline bool ch32UsbHsPhyInit(void)
     RCC_UTMIcmd(ENABLE);
     RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS, ENABLE);
     return true;
+}
+
+static inline const char *ch32UsbGetUidSerialString(char serialBuf[25])
+{
+    static const char hexDigits[16] = "0123456789ABCDEF";
+    const uint32_t words[3] = { U_ID_0, U_ID_1, U_ID_2 };
+
+    for (unsigned w = 0; w < 3U; w++) {
+        const uint32_t val = words[w];
+        for (unsigned nib = 0; nib < 8U; nib++) {
+            serialBuf[w * 8U + nib] = hexDigits[(val >> (28U - nib * 4U)) & 0x0FU];
+        }
+    }
+    serialBuf[24] = '\0';
+    return serialBuf;
 }

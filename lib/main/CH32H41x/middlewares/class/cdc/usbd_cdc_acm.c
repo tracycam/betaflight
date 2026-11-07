@@ -3,11 +3,15 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "platform.h"
+
+#ifdef USE_VCP
+
 #include "usbd_core.h"
 #include "usbd_cdc_acm.h"
 
-const char *stop_name[] = { "1", "1.5", "2" };
-const char *parity_name[] = { "N", "O", "E", "M", "S" };
+static const char *const stop_name[] = { "1", "1.5", "2" };
+static const char *const parity_name[] = { "N", "O", "E", "M", "S" };
 
 static int cdc_acm_class_interface_request_handler(uint8_t busid, struct usb_setup_packet *setup, uint8_t **data, uint32_t *len)
 {
@@ -48,6 +52,8 @@ static int cdc_acm_class_interface_request_handler(uint8_t busid, struct usb_set
                 line_coding.bParityType >= sizeof(parity_name) / sizeof(parity_name[0])) {
                 return -1;
             }
+            (void)stop_name;
+            (void)parity_name;
             USB_LOG_DBG("Set intf:%d linecoding <%d %d %s %s>\r\n",
                         intf_num,
                         (unsigned int)line_coding.dwDTERate,
@@ -148,3 +154,5 @@ __WEAK void usbd_cdc_acm_send_break(uint8_t busid, uint8_t intf)
     (void)busid;
     (void)intf;
 }
+
+#endif /* USE_VCP */
