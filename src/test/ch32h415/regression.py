@@ -208,22 +208,36 @@ int main(void) {
 run('flash_fast_timeout', '''
 #define SR_BSY 1u
 #define SR_WR_BSY 2u
+#define SR_WRPRTERR 0x10u
+#define SR_EOP 0x20u
 #define CR_PG_Set 1u
 #define CR_PER_Set 2u
 #define CR_PAGE_PG 0x10000u
 #define CR_BER 0x40000u
 #define CR_PG_STRT 0x200000u
 #define CR_MODE_Mask (CR_PG_Set | CR_PER_Set | CR_PAGE_PG | CR_BER)
-typedef enum { FLASH_COMPLETE, FLASH_TIMEOUT } FLASH_Status;
+#define ProgramTimeout 8u
+typedef enum { FLASH_BUSY=1, FLASH_ERROR_WRP, FLASH_COMPLETE, FLASH_TIMEOUT } FLASH_Status;
 static struct { uint32_t STATR, CTLR; } registers;
 #define FLASH (&registers)
-static unsigned waits, failAt, restored, syncs;
-static uint32_t FLASH_FastIrqSave(void) { return 0x88; }
-static void FLASH_FastIrqRestore(uint32_t state) { restored=state; }
-static void FLASH_RegSync(void) { (void)*(volatile uint32_t *)&FLASH->CTLR; syncs++; }
+static unsigned waits, failAt, syncs;
+static bool raiseWrpOnCommit;
+''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','static uint32_t FLASH_FastIrqSave(')
+    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','static void FLASH_FastIrqRestore(') + '''
+static void FLASH_RegSync(void) {
+    (void)*(volatile uint32_t *)&FLASH->CTLR;
+    syncs++;
+    if (raiseWrpOnCommit && (registers.CTLR & CR_PG_STRT)) {
+        registers.STATR = SR_WRPRTERR;
+    } else if (!(registers.CTLR & CR_PG_STRT)) {
+        /* Simulate hardware RC_W1 clear of sticky EOP/WRPRTERR before commit */
+        registers.STATR &= ~(SR_EOP | SR_WRPRTERR);
+    }
+}
 static uint32_t FLASH_FastWait(uint32_t mask) {
     waits++;
     if (waits == failAt) { registers.STATR=mask; return 0; }
+    registers.STATR &= ~mask;
     return 1;
 }
 static uint32_t flash[64] __attribute__((aligned(256)));
@@ -231,13 +245,17 @@ static uint32_t flash[64] __attribute__((aligned(256)));
 int main(void) {
     uint32_t input[64]; for (unsigned i=0; i<64; i++) input[i]=i+1;
     if ((uintptr_t)flash > UINT32_MAX) return 1;
-    failAt=1; registers.STATR=0; registers.CTLR=0; waits=restored=syncs=0;
-    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_TIMEOUT || registers.CTLR || restored!=0x88) return 2;
-    failAt=2; registers.STATR=0; registers.CTLR=0; waits=restored=syncs=0; memset(flash,0,sizeof(flash));
-    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_TIMEOUT || flash[0]!=1 || flash[1] || !(registers.CTLR & CR_PAGE_PG) || (registers.CTLR & CR_PG_STRT) || restored!=0x88) return 3;
-    failAt=0; registers.STATR=0; registers.CTLR=CR_PER_Set | CR_PG_Set; waits=restored=syncs=0;
-    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_COMPLETE || memcmp(flash,input,sizeof(flash)) || (registers.CTLR & CR_MODE_Mask) || syncs<3 || restored!=0x88) return 4;
-    puts("timeout stops writes, preserves busy mode, clears stale idle modes and restores interrupts");
+    failAt=1; registers.STATR=0; registers.CTLR=0; waits=syncs=0;
+    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_TIMEOUT || registers.CTLR) return 2;
+    failAt=2; registers.STATR=0; registers.CTLR=0; waits=syncs=0; memset(flash,0,sizeof(flash));
+    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_TIMEOUT || flash[0]!=1 || flash[1] || !(registers.CTLR & CR_PAGE_PG) || (registers.CTLR & CR_PG_STRT)) return 3;
+    failAt=66; registers.STATR=0; registers.CTLR=0; waits=syncs=0; memset(flash,0,sizeof(flash));
+    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_TIMEOUT || !(registers.CTLR & CR_PAGE_PG)) return 4;
+    failAt=0; registers.STATR=SR_WRPRTERR | SR_EOP; registers.CTLR=CR_PER_Set | CR_PG_Set; waits=syncs=0;
+    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_COMPLETE || memcmp(flash,input,sizeof(flash)) || (registers.CTLR & CR_MODE_Mask) || syncs<66) return 5;
+    raiseWrpOnCommit=true; registers.STATR=0; registers.CTLR=0; waits=syncs=0;
+    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_ERROR_WRP || (registers.CTLR & CR_MODE_Mask)) return 6;
+    puts("entry/latch/commit timeouts, stale flag clear, WRPRTERR detection and host IRQ guard");
 }
 ''',extra_flags=('-fno-pie','-no-pie'))
 run('flash_erase_status_recovery', '''
@@ -246,6 +264,8 @@ typedef volatile uint32_t vu32;
 #define FLASH_FLAG_WRPRTERR 0x10u
 #define SR_BSY 1u
 #define SR_WR_BSY 2u
+#define SR_WRPRTERR 0x10u
+#define SR_EOP 0x20u
 #define CR_PG_Set 1u
 #define CR_PER_Set 2u
 #define CR_PER_Reset (~2u)
@@ -257,138 +277,210 @@ typedef volatile uint32_t vu32;
 #define CR_MODE_Mask (CR_PG_Set | CR_PER_Set | CR_PAGE_PG | CR_BER)
 #define FLASH_KEY1 0x45670123u
 #define FLASH_KEY2 0xCDEF89ABu
-#define EraseTimeout 16u
+#define EraseTimeout 8u
 typedef enum { FLASH_BUSY=1, FLASH_ERROR_WRP, FLASH_COMPLETE, FLASH_TIMEOUT } FLASH_Status;
 static struct { uint32_t KEYR, STATR, CTLR, ADDR, MODEKEYR; } registers;
 #define FLASH (&registers)
 static uint32_t flashMode;
 #define FLASH_CFGR0_BASE ((uintptr_t)&flashMode)
-static unsigned restored, waitCalls, failWaitAt;
+static unsigned restored;
+static bool stickBusyOnStart, raiseWrpOnStart;
 static uint32_t startCtlrSeen;
 static uint32_t FLASH_FastIrqSave(void) { return 0x88; }
 static void FLASH_FastIrqRestore(uint32_t state) { restored=state; }
-''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','static void FLASH_RegSync(')
-    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_GetStatus(') + '''
-static FLASH_Status FLASH_WaitForLastOperation(uint32_t timeout) {
-    (void)timeout;
-    waitCalls++;
-    if (waitCalls > 1 && (registers.CTLR & CR_STRT_Set)) startCtlrSeen=registers.CTLR;
-    if (waitCalls == failWaitAt) { registers.STATR=SR_BSY; return FLASH_TIMEOUT; }
-    registers.STATR=0;
-    return FLASH_COMPLETE;
+static void FLASH_RegSync(void) {
+    if (!(registers.CTLR & CR_STRT_Set) && (registers.STATR == (SR_EOP | SR_WRPRTERR))) {
+        /* Simulate hardware RC_W1 clear of sticky EOP/WRPRTERR before STRT */
+        registers.STATR = 0;
+    }
+    if (registers.CTLR & CR_STRT_Set) {
+        startCtlrSeen = registers.CTLR;
+        registers.CTLR &= ~CR_STRT_Set;
+        if (stickBusyOnStart) {
+            registers.STATR = SR_BSY;
+        } else if (raiseWrpOnStart) {
+            registers.STATR = FLASH_FLAG_WRPRTERR;
+        } else {
+            registers.STATR = 0;
+        }
+    }
 }
-''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_ErasePage(')
+''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_GetStatus(')
+    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_WaitForLastOperation(')
+    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_ErasePage(')
     + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','void FLASH_Unlock_Fast(')
     + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','void FLASH_Lock_Fast(') + '''
 int main(void) {
     registers.STATR=SR_WR_BSY;
     if (FLASH_GetStatus() != FLASH_BUSY) return 1;
+    if (FLASH_WaitForLastOperation(4u) != FLASH_TIMEOUT) return 2;
     registers.STATR=FLASH_FLAG_WRPRTERR;
-    if (FLASH_GetStatus() != FLASH_ERROR_WRP) return 2;
+    if (FLASH_GetStatus() != FLASH_ERROR_WRP) return 3;
     registers.STATR=0;
-    if (FLASH_GetStatus() != FLASH_COMPLETE) return 3;
+    if (FLASH_GetStatus() != FLASH_COMPLETE) return 4;
 
+    /* Stale WRPRTERR on idle entry must not poison a subsequent valid erase. */
     flashMode=1u << 28;
+    registers.STATR=FLASH_FLAG_WRPRTERR;
     registers.CTLR=CR_PAGE_PG;
-    waitCalls=failWaitAt=restored=startCtlrSeen=0;
-    if (FLASH_ErasePage(0x08019234u) != FLASH_COMPLETE) return 4;
-    if (registers.ADDR != 0x08018000u || (startCtlrSeen & CR_PAGE_PG) || !(startCtlrSeen & CR_PER_Set)) return 5;
-    if ((registers.CTLR & CR_MODE_Mask) || restored != 0x88) return 6;
+    restored=startCtlrSeen=0;
+    stickBusyOnStart=raiseWrpOnStart=false;
+    if (FLASH_ErasePage(0x08019234u) != FLASH_COMPLETE) return 5;
+    if (registers.ADDR != 0x08018000u || (startCtlrSeen & CR_PAGE_PG) || !(startCtlrSeen & CR_PER_Set)) return 6;
+    if ((registers.CTLR & CR_MODE_Mask) || restored != 0x88) return 7;
 
+    /* Fresh WRPRTERR raised by protected sector must return FLASH_ERROR_WRP and clear CR_PER. */
+    raiseWrpOnStart=true;
+    registers.STATR=0;
     registers.CTLR=0;
-    waitCalls=restored=0;
-    failWaitAt=2;
-    if (FLASH_ErasePage(0x08018000u) != FLASH_TIMEOUT || !(registers.CTLR & CR_PER_Set) || restored != 0x88) return 7;
+    restored=0;
+    if (FLASH_ErasePage(0x08018000u) != FLASH_ERROR_WRP || (registers.CTLR & CR_MODE_Mask) || restored != 0x88) return 8;
 
-    failWaitAt=0;
+    /* Erase timeout while busy must preserve CR_PER_Set. */
+    raiseWrpOnStart=false;
+    stickBusyOnStart=true;
+    registers.STATR=0;
+    registers.CTLR=0;
+    restored=0;
+    if (FLASH_ErasePage(0x08018000u) != FLASH_TIMEOUT || !(registers.CTLR & CR_PER_Set) || restored != 0x88) return 9;
+
+    stickBusyOnStart=false;
+    registers.STATR=0;
     registers.CTLR=CR_PAGE_PG;
     FLASH_Lock_Fast();
-    if ((registers.CTLR & CR_MODE_Mask) || (registers.CTLR & (CR_LOCK_Set | CR_FLOCK_Set)) != (CR_LOCK_Set | CR_FLOCK_Set)) return 8;
+    if ((registers.CTLR & CR_MODE_Mask) || (registers.CTLR & (CR_LOCK_Set | CR_FLOCK_Set)) != (CR_LOCK_Set | CR_FLOCK_Set)) return 10;
 
     registers.CTLR=CR_PAGE_PG | CR_PER_Set;
     FLASH_Unlock_Fast();
-    if ((registers.CTLR & CR_MODE_Mask) || registers.KEYR != FLASH_KEY2 || registers.MODEKEYR != FLASH_KEY2) return 9;
-    puts("write-busy status, IRQ-masked erase and stale fast-mode recovery");
+    if ((registers.CTLR & CR_MODE_Mask) || registers.KEYR != FLASH_KEY2 || registers.MODEKEYR != FLASH_KEY2) return 11;
+    puts("real WaitForLastOperation, stale/fresh WRPRTERR erase handling and fast-mode recovery");
 }
 ''')
 run('ch32_config_flash_bounds', '''
 #define CH32H4
 #define CONFIG_STREAMER_BUFFER_SIZE 256
 #define STATIC_ASSERT(c, m) _Static_assert(c, m)
+#define FLASH_FLAG_EOP 0x20u
+#define FLASH_FLAG_WRPRTERR 0x10u
 typedef uint32_t config_streamer_buffer_type_t;
 typedef enum { CONFIG_RESULT_SUCCESS=0, CONFIG_RESULT_FAILURE=-1, CONFIG_RESULT_ADDRESS_INVALID=-3, CONFIG_RESULT_TIMEOUT=-4 } configStreamerResult_e;
-typedef enum { FLASH_COMPLETE, FLASH_ERROR, FLASH_TIMEOUT } FLASH_Status;
+typedef enum { FLASH_BUSY=1, FLASH_ERROR_PG, FLASH_ERROR_WRP, FLASH_COMPLETE, FLASH_TIMEOUT } FLASH_Status;
 static uint8_t flash[16384] __attribute__((aligned(8192)));
 static uint8_t physicalFlash[16384];
-#define __config_start flash[0]
-#define __config_end flash[16384]
+static uintptr_t cfgStart, cfgEnd;
+#define __config_start (*(uint8_t *)cfgStart)
+#define __config_end (*(uint8_t *)cfgEnd)
 static uint32_t flashMode;
 #define FLASH_CFGR0_BASE ((uintptr_t)&flashMode)
-static unsigned erases, writes, eraseStep, invalidations, locks;
+static unsigned erases, writes, eraseStep, invalidations, locks, unlocks, clearedFlags;
 static bool suppressWrite;
-static bool timeoutWrite;
+static FLASH_Status forceEraseStatus = FLASH_COMPLETE;
+static FLASH_Status forceProgStatus = FLASH_COMPLETE;
+static FLASH_Status forceFinalStatus = FLASH_COMPLETE;
 static void ch32InvalidateFlashCache(void) {
     memcpy(flash, physicalFlash, sizeof(flash));
     invalidations++;
 }
+static void FLASH_Unlock_Fast(void) { unlocks++; }
 static void FLASH_Lock_Fast(void) { locks++; }
+static void FLASH_ClearFlag(uint32_t flags) { clearedFlags |= flags; }
 static FLASH_Status FLASH_ErasePage(uintptr_t addr) {
-    if (addr != (uintptr_t)flash + erases * eraseStep) return FLASH_ERROR;
+    if (forceEraseStatus != FLASH_COMPLETE) return forceEraseStatus;
+    if (addr != (uintptr_t)flash + erases * eraseStep) return FLASH_ERROR_PG;
     memset(physicalFlash + (addr - (uintptr_t)flash), 0xff, eraseStep);
     erases++;
     return FLASH_COMPLETE;
 }
 static FLASH_Status FLASH_ProgramPage_Fast(uintptr_t addr, uint32_t *buf) {
-    if (timeoutWrite) return FLASH_TIMEOUT;
+    if (forceProgStatus != FLASH_COMPLETE) return forceProgStatus;
     if (!suppressWrite) memcpy(physicalFlash + (addr - (uintptr_t)flash), buf, CONFIG_STREAMER_BUFFER_SIZE);
     writes++;
     return FLASH_COMPLETE;
 }
-static FLASH_Status FLASH_GetStatus(void) { return FLASH_COMPLETE; }
-''' + fn('src/platform/common/stm32/config_flash.c','static bool ch32ConfigAddressIsValid(')
-    + fn('src/platform/common/stm32/config_flash.c','void configLock(')
-    + fn('src/platform/common/stm32/config_flash.c','configStreamerResult_e configWriteWord(') + '''
+static FLASH_Status FLASH_GetStatus(void) { return forceFinalStatus; }
+''' + fn('src/platform/CH32/config_flash.c','static bool ch32ConfigAddressIsValid(')
+    + fn('src/platform/CH32/config_flash.c','static configStreamerResult_e ch32FlashStatusToConfigResult(')
+    + fn('src/platform/CH32/config_flash.c','void configUnlock(')
+    + fn('src/platform/CH32/config_flash.c','void configLock(')
+    + fn('src/platform/CH32/config_flash.c','void configClearFlags(')
+    + fn('src/platform/CH32/config_flash.c','configStreamerResult_e configWriteWord(') + '''
 int main(void) {
     uint32_t buffer[64];
     for (unsigned i=0; i<64; i++) buffer[i]=0xA55A0000u + i;
+    cfgStart = (uintptr_t)flash;
+    cfgEnd = (uintptr_t)flash + sizeof(flash);
+
+    configUnlock();
+    configClearFlags();
+    if (unlocks != 1 || clearedFlags != (FLASH_FLAG_EOP | FLASH_FLAG_WRPRTERR)) return 1;
+
     for (int dual=0; dual<2; dual++) {
         erases=writes=invalidations=0;
         memset(flash, 0x3C, sizeof(flash));
         memset(physicalFlash, 0x3C, sizeof(physicalFlash));
         flashMode=dual ? 1u<<28 : 0;
         eraseStep=dual ? 8192 : 4096;
-        if (configWriteWord((uintptr_t)flash-256, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 1;
-        if (configWriteWord((uintptr_t)flash+sizeof(flash), buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 2;
-        if (configWriteWord((uintptr_t)flash+1, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 3;
-        if (configWriteWord(UINTPTR_MAX-127, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 4;
+        if (configWriteWord((uintptr_t)flash-256, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 2;
+        if (configWriteWord((uintptr_t)flash+sizeof(flash), buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 3;
+        if (configWriteWord((uintptr_t)flash+1, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 4;
+        if (configWriteWord(UINTPTR_MAX-127, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 5;
         for (unsigned offset=0; offset<sizeof(flash); offset+=256)
-            if (configWriteWord((uintptr_t)flash+offset, buffer) != CONFIG_RESULT_SUCCESS) return 5;
-        if (erases != sizeof(flash)/eraseStep || writes != sizeof(flash)/256) return 6;
-        if (invalidations != erases + writes) return 7;
+            if (configWriteWord((uintptr_t)flash+offset, buffer) != CONFIG_RESULT_SUCCESS) return 6;
+        if (erases != sizeof(flash)/eraseStep || writes != sizeof(flash)/256) return 7;
+        if (invalidations != erases + writes) return 8;
     }
+
+    /* Misaligned linker __config_start / __config_end rejected */
+    cfgStart = (uintptr_t)flash + 256;
+    if (configWriteWord((uintptr_t)flash + 256, buffer) != CONFIG_RESULT_ADDRESS_INVALID) return 9;
+    cfgStart = (uintptr_t)flash;
+
     memset(flash, 0, sizeof(flash));
     memcpy(physicalFlash, buffer, 256);
     locks=invalidations=0;
     configLock();
-    if (locks != 1 || invalidations != 1 || memcmp(flash, buffer, 256) != 0) return 8;
+    if (locks != 1 || invalidations != 1 || memcmp(flash, buffer, 256) != 0) return 10;
 
     memset(flash, 0, 256);
     memset(physicalFlash, 0, 256);
     suppressWrite=true;
     erases=0;
-    if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_FAILURE) return 9;
-    erases=0;
-    timeoutWrite=true;
-    invalidations=0;
-    if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_TIMEOUT || invalidations < 2) return 10;
-    puts("single/dual erase geometry, cache invalidation, boundaries, timeout and silent write failure");
+    if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_FAILURE) return 11;
+
+    suppressWrite=false;
+    forceProgStatus=FLASH_TIMEOUT;
+    erases=invalidations=0;
+    if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_TIMEOUT || invalidations < 2) return 12;
+
+    forceProgStatus=FLASH_ERROR_WRP;
+    erases=invalidations=0;
+    if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_ADDRESS_INVALID || invalidations < 2) return 13;
+
+    forceProgStatus=FLASH_COMPLETE;
+    forceEraseStatus=FLASH_ERROR_WRP;
+    erases=invalidations=0;
+    if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_ADDRESS_INVALID || invalidations != 1) return 14;
+
+    forceEraseStatus=FLASH_COMPLETE;
+    forceFinalStatus=FLASH_ERROR_WRP;
+    erases=writes=invalidations=0;
+    if (configWriteWord((uintptr_t)flash, buffer) != CONFIG_RESULT_ADDRESS_INVALID || invalidations < 2) return 15;
+    puts("CH32 config_flash bounds, cache invalidation, WRP/timeout status mapping and lock/unlock");
 }
 ''')
 run('ch32_reset_flash_drain', '''
+#include <setjmp.h>
 #define CH32_FLASH_RESET_WAIT_LIMIT 8U
 #define FLASH_STATR_BSY 1U
 #define FLASH_STATR_WRBSY 2U
-static unsigned polls, irqDisabled, resets;
+#define PERSISTENT_OBJECT_RESET_REASON 0
+#define RESET_NONE 0U
+#define UNUSED(x) ((void)(x))
+typedef int bootloaderRequestType_e;
+static unsigned polls, irqDisabled, resets, nopSpins, persistWrites;
+static uint32_t persistReason = 0xDEADBEEFU;
+static bool letResetFallThrough;
+static jmp_buf resetJmp;
 static uint32_t busySequence[16];
 typedef struct { uint32_t STATR; } flash_t;
 static flash_t *flashRead(void) {
@@ -399,27 +491,59 @@ static flash_t *flashRead(void) {
 }
 #define FLASH (flashRead())
 static void __disable_irq(void) { irqDisabled++; }
-static void NVIC_SystemReset(void) { resets++; }
-''' + fn('src/platform/CH32/system_ch32h41x.c','static void ch32WaitFlashIdleBeforeReset(') + '''
-static void testReset(void) {
-    __disable_irq();
-    ch32WaitFlashIdleBeforeReset();
-    NVIC_SystemReset();
+static void persistentObjectWrite(int id, uint32_t val) {
+    if (id != PERSISTENT_OBJECT_RESET_REASON) abort();
+    persistReason = val;
+    persistWrites++;
 }
+static void NVIC_SystemReset(void) {
+    resets++;
+    if (!letResetFallThrough) {
+        longjmp(resetJmp, 1);
+    }
+}
+static void __NOP(void) {
+    if (++nopSpins >= 3) {
+        longjmp(resetJmp, 2);
+    }
+}
+''' + fn('src/platform/CH32/system_ch32h41x.c','static void ch32WaitFlashIdleBeforeReset(')
+    + fn('src/platform/CH32/system_ch32h41x.c','void systemReset(')
+    + fn('src/platform/CH32/system_ch32h41x.c','void systemResetToBootloader(')
+    + fn('src/main/drivers/usb_msc_common.c','void systemResetFromMsc(') + '''
 int main(void) {
     memset(busySequence, 0, sizeof(busySequence));
     busySequence[0]=FLASH_STATR_BSY;
     busySequence[1]=FLASH_STATR_WRBSY;
     busySequence[2]=0;
-    polls=irqDisabled=resets=0;
-    testReset();
-    if (irqDisabled != 1 || polls != 3 || resets != 1) return 1;
+    polls=irqDisabled=resets=nopSpins=0;
+    letResetFallThrough=true;
+    if (setjmp(resetJmp) == 0) {
+        systemReset();
+        return 1; /* systemReset must never return to caller */
+    }
+    if (irqDisabled != 1 || polls != 3 || resets != 1 || nopSpins != 3) return 2;
 
+    letResetFallThrough=false;
     for (unsigned i=0; i<16; i++) busySequence[i]=FLASH_STATR_BSY;
-    polls=irqDisabled=resets=0;
-    testReset();
-    if (polls != CH32_FLASH_RESET_WAIT_LIMIT || resets != 1) return 2;
-    puts("systemReset drains busy/write-busy flash with bounded timeout");
+    polls=irqDisabled=resets=persistWrites=0;
+    persistReason=99U;
+    if (setjmp(resetJmp) == 0) {
+        systemResetToBootloader(0);
+        return 3;
+    }
+    if (persistWrites != 1 || persistReason != RESET_NONE || irqDisabled != 1 || polls != CH32_FLASH_RESET_WAIT_LIMIT || resets != 1) return 4;
+
+    memset(busySequence, 0, sizeof(busySequence));
+    busySequence[0]=FLASH_STATR_WRBSY;
+    polls=irqDisabled=resets=persistWrites=0;
+    persistReason=77U;
+    if (setjmp(resetJmp) == 0) {
+        systemResetFromMsc();
+        return 5;
+    }
+    if (persistWrites != 1 || persistReason != RESET_NONE || irqDisabled != 1 || polls != 2 || resets != 1) return 6;
+    puts("real systemReset/Bootloader/MSC paths drain busy flash and spin without returning");
 }
 ''')
 run('pfic', '#define PLATFORM_CUSTOM_ATOMIC_BLOCK_ALL\n#include "platform/priority.h"\nstatic volatile uint32_t threshold;\n#define PFIC_ITHRESDR threshold\n'

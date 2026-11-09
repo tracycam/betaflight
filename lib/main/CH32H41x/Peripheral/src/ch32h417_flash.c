@@ -68,14 +68,22 @@
 
 static uint32_t FLASH_FastIrqSave(void)
 {
+#if defined(__GNUC__) && defined(__riscv) && (defined(Core_V3F) || defined(Core_V5F)) && !defined(UNIT_TEST)
     uint32_t state;
     __asm volatile ("csrrc %0, 0x800, %1\n\tfence.i" : "=r" (state) : "r" (0x88u) : "memory");
     return state & 0x88u;
+#else
+    return 0;
+#endif
 }
 
 static void FLASH_FastIrqRestore(uint32_t state)
 {
+#if defined(__GNUC__) && defined(__riscv) && (defined(Core_V3F) || defined(Core_V5F)) && !defined(UNIT_TEST)
     __asm volatile ("fence iorw, iorw\n\tcsrs 0x800, %0" : : "r" (state) : "memory");
+#else
+    (void)state;
+#endif
 }
 
 static void FLASH_RegSync(void)
@@ -142,8 +150,9 @@ FLASH_Status FLASH_ErasePage(uint32_t Page_Address)
     const uint32_t irqState = FLASH_FastIrqSave();
     FLASH_Status status = FLASH_WaitForLastOperation(EraseTimeout);
 
-    if(status == FLASH_COMPLETE)
+    if(status != FLASH_TIMEOUT)
     {
+        FLASH->STATR = SR_EOP | SR_WRPRTERR;
         FLASH->CTLR = (FLASH->CTLR & ~CR_MODE_Mask) | CR_PER_Set;
         FLASH->ADDR = Page_Address;
         FLASH_RegSync();
@@ -821,6 +830,9 @@ void FLASH_EraseBlock_Fast(uint32_t Block_Address)
 static uint32_t FLASH_FastWait(uint32_t mask)
 {
     uint32_t timeout = ProgramTimeout;
+#ifdef __riscv
+    __asm volatile ("fence iorw, iorw" : : : "memory");
+#endif
     while(FLASH->STATR & mask)
     {
         if(timeout-- == 0)
@@ -839,6 +851,7 @@ FLASH_Status FLASH_ProgramPage_Fast(uint32_t Page_Address, uint32_t *pbuf)
 
     if(!FLASH_FastWait(SR_BSY | SR_WR_BSY))
         goto done;
+    FLASH->STATR = SR_EOP | SR_WRPRTERR;
     FLASH->CTLR = (FLASH->CTLR & ~CR_MODE_Mask) | CR_PAGE_PG;
     FLASH_RegSync();
 
@@ -848,9 +861,7 @@ FLASH_Status FLASH_ProgramPage_Fast(uint32_t Page_Address, uint32_t *pbuf)
         Page_Address += 4;
         pbuf += 1;
         size -= 1;
-#ifdef __riscv
-        __asm volatile ("fence iorw, iorw" : : : "memory");
-#endif
+        FLASH_RegSync();
         if(!FLASH_FastWait(SR_WR_BSY))
             goto done;
     }
@@ -859,7 +870,7 @@ FLASH_Status FLASH_ProgramPage_Fast(uint32_t Page_Address, uint32_t *pbuf)
     FLASH_RegSync();
     if(!FLASH_FastWait(SR_BSY | SR_WR_BSY))
         goto done;
-    status = FLASH_COMPLETE;
+    status = (FLASH->STATR & SR_WRPRTERR) ? FLASH_ERROR_WRP : FLASH_COMPLETE;
 
 done:
     /* Do not change programming mode while the controller is still busy. */
@@ -1208,7 +1219,7 @@ FLASH_Status FLASH_ROM_ERASE(uint32_t StartAddr, uint32_t Length)
 
         if(Length1)//back
         {
-            ROM_ERASE(Addr1, (Length1 >> 1), Size_4KB);
+            ROM_ERASE(Addr1, (Length1 >> 12), Size_4KB);
         }
     }
 

@@ -122,7 +122,7 @@ LTO                     := no
 MCU_COMMON_SRC = \
         common/stm32/system.c \
         common/stm32/io_impl.c \
-        common/stm32/config_flash.c \
+        CH32/config_flash.c \
         common/stm32/mco.c \
         CH32/startup/ch32h417_it.c \
         CH32/startup/system_ch32h417.c \

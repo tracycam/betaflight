@@ -24,6 +24,8 @@
 
 #include "platform.h"
 
+#include "common/utils.h"
+
 #include "drivers/exti.h"
 #include "drivers/nvic.h"
 #include "drivers/system.h"
@@ -46,6 +48,9 @@ bool usbCableIsActive(void)
 
 static void ch32WaitFlashIdleBeforeReset(void)
 {
+#ifdef __riscv
+    asm volatile ("fence iorw, iorw" ::: "memory");
+#endif
     for (uint32_t timeout = CH32_FLASH_RESET_WAIT_LIMIT;
          timeout != 0U && (FLASH->STATR & (FLASH_STATR_BSY | FLASH_STATR_WRBSY)) != 0U;
          timeout--) {
@@ -56,17 +61,27 @@ void systemReset(void)
 {
     __disable_irq();
     ch32WaitFlashIdleBeforeReset();
+#ifdef __riscv
     asm volatile ("fence iorw, iorw" ::: "memory");
+#endif
     NVIC_SystemReset();
+#ifdef __riscv
+    asm volatile ("fence iorw, iorw" ::: "memory");
+#endif
+    while (true) {
+        __NOP();
+    }
 }
 
 void systemResetToBootloader(bootloaderRequestType_e requestType)
 {
-    (void)requestType;
+    UNUSED(requestType);
     // Protocol entry points reject this operation. Keep a normal reset as a
     // fallback for direct callers until the paired bootloader supports it.
     persistentObjectWrite(PERSISTENT_OBJECT_RESET_REASON, RESET_NONE);
+#ifdef __riscv
     asm volatile ("fence iorw, iorw" ::: "memory");
+#endif
     systemReset();
 }
 

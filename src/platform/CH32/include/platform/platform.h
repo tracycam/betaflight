@@ -78,6 +78,21 @@ __attribute__((always_inline)) static inline void ch32DmaBarrier(void)
     asm volatile ("fence iorw, iorw" ::: "memory");
 }
 
+__attribute__((always_inline)) static inline void ch32InvalidateFlashCache(void)
+{
+#if defined(__riscv) && defined(Core_V5F) && !defined(UNIT_TEST)
+    // QingKe V5F caches reads from the internal flash window (0x08000000+) via
+    // CSR 0xBC2. Invalidate cached lines via CSR 0xBD0 bit 2 after flash erase
+    // or fast-page programming so readback verification observes physical flash.
+    asm volatile (
+        "fence iorw, iorw\n\t"
+        "csrwi 0xbd0, 0x4\n\t"
+        "fence.i"
+        : : : "memory"
+    );
+#endif
+}
+
 __attribute__((always_inline)) static inline void __set_BASEPRI(uint32_t basePri)
 {
     // Publish protected writes before restoring a less restrictive threshold.
