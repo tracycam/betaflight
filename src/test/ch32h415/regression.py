@@ -1225,7 +1225,9 @@ int main(void) {
 ''')
 
 run('theia_async_font', '''
-#define H415C_FONT_GLYPHS 512u
+#define THEIA_FONT_GLYPHS 512u
+#define THEIA_FONT_GLYPH_BYTES 54u
+#define UNUSED(x) ((void)(x))
 #define ARMED 1
 #define ARMING_FLAG(x) (armed)
 typedef uint32_t timeUs_t;
@@ -1237,7 +1239,7 @@ typedef struct { bool fontOutstanding; } theiaProducer_t;
 static theiaProducer_t producer;
 static int fontOwner;
 static uint16_t fontGlyph;
-static uint8_t fontData[54];
+static uint8_t fontData[THEIA_FONT_GLYPH_BYTES];
 static timeUs_t fontStartedAt, now;
 static bool armed;
 static int writes, cancels;

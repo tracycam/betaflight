@@ -32,6 +32,7 @@
 
 // The paired H415 bootloader currently accepts only the hardware BOOT0 input.
 #define PLATFORM_SUPPORTS_SOFTWARE_BOOTLOADER 0
+#define USE_PLATFORM_THEIA_OSD
 
 // Chip Unique ID on H41X
 #define U_ID_0 (*(uint32_t *)0x1ffff7e8)
