@@ -208,14 +208,19 @@ int main(void) {
 run('flash_fast_timeout', '''
 #define SR_BSY 1u
 #define SR_WR_BSY 2u
+#define CR_PG_Set 1u
+#define CR_PER_Set 2u
 #define CR_PAGE_PG 0x10000u
+#define CR_BER 0x40000u
 #define CR_PG_STRT 0x200000u
+#define CR_MODE_Mask (CR_PG_Set | CR_PER_Set | CR_PAGE_PG | CR_BER)
 typedef enum { FLASH_COMPLETE, FLASH_TIMEOUT } FLASH_Status;
 static struct { uint32_t STATR, CTLR; } registers;
 #define FLASH (&registers)
-static unsigned waits, failAt, restored;
+static unsigned waits, failAt, restored, syncs;
 static uint32_t FLASH_FastIrqSave(void) { return 0x88; }
 static void FLASH_FastIrqRestore(uint32_t state) { restored=state; }
+static void FLASH_RegSync(void) { (void)*(volatile uint32_t *)&FLASH->CTLR; syncs++; }
 static uint32_t FLASH_FastWait(uint32_t mask) {
     waits++;
     if (waits == failAt) { registers.STATR=mask; return 0; }
@@ -226,15 +231,86 @@ static uint32_t flash[64] __attribute__((aligned(256)));
 int main(void) {
     uint32_t input[64]; for (unsigned i=0; i<64; i++) input[i]=i+1;
     if ((uintptr_t)flash > UINT32_MAX) return 1;
-    failAt=1; registers.STATR=0; registers.CTLR=0; waits=restored=0;
+    failAt=1; registers.STATR=0; registers.CTLR=0; waits=restored=syncs=0;
     if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_TIMEOUT || registers.CTLR || restored!=0x88) return 2;
-    failAt=2; registers.STATR=0; registers.CTLR=0; waits=restored=0; memset(flash,0,sizeof(flash));
+    failAt=2; registers.STATR=0; registers.CTLR=0; waits=restored=syncs=0; memset(flash,0,sizeof(flash));
     if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_TIMEOUT || flash[0]!=1 || flash[1] || !(registers.CTLR & CR_PAGE_PG) || (registers.CTLR & CR_PG_STRT) || restored!=0x88) return 3;
-    failAt=0; registers.STATR=0; registers.CTLR=0; waits=restored=0;
-    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_COMPLETE || memcmp(flash,input,sizeof(flash)) || (registers.CTLR & CR_PAGE_PG) || restored!=0x88) return 4;
-    puts("timeout stops writes, preserves busy mode and restores interrupts");
+    failAt=0; registers.STATR=0; registers.CTLR=CR_PER_Set | CR_PG_Set; waits=restored=syncs=0;
+    if (FLASH_ProgramPage_Fast((uint32_t)(uintptr_t)flash,input) != FLASH_COMPLETE || memcmp(flash,input,sizeof(flash)) || (registers.CTLR & CR_MODE_Mask) || syncs<3 || restored!=0x88) return 4;
+    puts("timeout stops writes, preserves busy mode, clears stale idle modes and restores interrupts");
 }
 ''',extra_flags=('-fno-pie','-no-pie'))
+run('flash_erase_status_recovery', '''
+typedef volatile uint32_t vu32;
+#define FLASH_FLAG_BSY 1u
+#define FLASH_FLAG_WRPRTERR 0x10u
+#define SR_BSY 1u
+#define SR_WR_BSY 2u
+#define CR_PG_Set 1u
+#define CR_PER_Set 2u
+#define CR_PER_Reset (~2u)
+#define CR_STRT_Set 0x40u
+#define CR_LOCK_Set 0x80u
+#define CR_FLOCK_Set 0x8000u
+#define CR_PAGE_PG 0x10000u
+#define CR_BER 0x40000u
+#define CR_MODE_Mask (CR_PG_Set | CR_PER_Set | CR_PAGE_PG | CR_BER)
+#define FLASH_KEY1 0x45670123u
+#define FLASH_KEY2 0xCDEF89ABu
+#define EraseTimeout 16u
+typedef enum { FLASH_BUSY=1, FLASH_ERROR_WRP, FLASH_COMPLETE, FLASH_TIMEOUT } FLASH_Status;
+static struct { uint32_t KEYR, STATR, CTLR, ADDR, MODEKEYR; } registers;
+#define FLASH (&registers)
+static uint32_t flashMode;
+#define FLASH_CFGR0_BASE ((uintptr_t)&flashMode)
+static unsigned restored, waitCalls, failWaitAt;
+static uint32_t startCtlrSeen;
+static uint32_t FLASH_FastIrqSave(void) { return 0x88; }
+static void FLASH_FastIrqRestore(uint32_t state) { restored=state; }
+''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','static void FLASH_RegSync(')
+    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_GetStatus(') + '''
+static FLASH_Status FLASH_WaitForLastOperation(uint32_t timeout) {
+    (void)timeout;
+    waitCalls++;
+    if (waitCalls > 1 && (registers.CTLR & CR_STRT_Set)) startCtlrSeen=registers.CTLR;
+    if (waitCalls == failWaitAt) { registers.STATR=SR_BSY; return FLASH_TIMEOUT; }
+    registers.STATR=0;
+    return FLASH_COMPLETE;
+}
+''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_ErasePage(')
+    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','void FLASH_Unlock_Fast(')
+    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','void FLASH_Lock_Fast(') + '''
+int main(void) {
+    registers.STATR=SR_WR_BSY;
+    if (FLASH_GetStatus() != FLASH_BUSY) return 1;
+    registers.STATR=FLASH_FLAG_WRPRTERR;
+    if (FLASH_GetStatus() != FLASH_ERROR_WRP) return 2;
+    registers.STATR=0;
+    if (FLASH_GetStatus() != FLASH_COMPLETE) return 3;
+
+    flashMode=1u << 28;
+    registers.CTLR=CR_PAGE_PG;
+    waitCalls=failWaitAt=restored=startCtlrSeen=0;
+    if (FLASH_ErasePage(0x08019234u) != FLASH_COMPLETE) return 4;
+    if (registers.ADDR != 0x08018000u || (startCtlrSeen & CR_PAGE_PG) || !(startCtlrSeen & CR_PER_Set)) return 5;
+    if ((registers.CTLR & CR_MODE_Mask) || restored != 0x88) return 6;
+
+    registers.CTLR=0;
+    waitCalls=restored=0;
+    failWaitAt=2;
+    if (FLASH_ErasePage(0x08018000u) != FLASH_TIMEOUT || !(registers.CTLR & CR_PER_Set) || restored != 0x88) return 7;
+
+    failWaitAt=0;
+    registers.CTLR=CR_PAGE_PG;
+    FLASH_Lock_Fast();
+    if ((registers.CTLR & CR_MODE_Mask) || (registers.CTLR & (CR_LOCK_Set | CR_FLOCK_Set)) != (CR_LOCK_Set | CR_FLOCK_Set)) return 8;
+
+    registers.CTLR=CR_PAGE_PG | CR_PER_Set;
+    FLASH_Unlock_Fast();
+    if ((registers.CTLR & CR_MODE_Mask) || registers.KEYR != FLASH_KEY2 || registers.MODEKEYR != FLASH_KEY2) return 9;
+    puts("write-busy status, IRQ-masked erase and stale fast-mode recovery");
+}
+''')
 run('ch32_config_flash_bounds', '''
 #define CH32H4
 #define CONFIG_STREAMER_BUFFER_SIZE 256
