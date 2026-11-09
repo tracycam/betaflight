@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "fc/runtime_config.h"
 #include "platform/usb_sdi_handoff.h"
 #include "scheduler/scheduler.h"
 
@@ -38,6 +39,10 @@ void ch32h415BootSdiPoll(timeUs_t nowUs)
     static timeUs_t pressedAt;
 
     if (switched) {
+        return;
+    }
+    if (ARMING_FLAG(ARMED)) {
+        holding = false;
         return;
     }
     if (!initialized) {

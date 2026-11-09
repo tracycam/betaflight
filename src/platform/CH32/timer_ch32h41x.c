@@ -35,12 +35,16 @@
 #ifdef USE_PLATFORM_TIMER_FILTER
 bool timerPlatformIsAvailable(const timerHardware_t *timerHardware)
 {
+#ifdef USE_THEIA_OSD
     const timerResource_t *tim = timerHardware->tim;
-    return tim != (const timerResource_t *)TIM2 &&
-        tim != (const timerResource_t *)TIM10 &&
-        tim != (const timerResource_t *)TIM11 &&
-        tim != (const timerResource_t *)TIM12 &&
-        IOGetByTag(timerHardware->tag) != NULL;
+    if (tim == (const timerResource_t *)TIM2 ||
+        tim == (const timerResource_t *)TIM10 ||
+        tim == (const timerResource_t *)TIM11 ||
+        tim == (const timerResource_t *)TIM12) {
+        return false;
+    }
+#endif
+    return IOGetByTag(timerHardware->tag) != NULL;
 }
 #endif
 

@@ -298,6 +298,8 @@ __attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state
 
 #define PLATFORM_TRAIT_RCC      1
 #define UART_TRAIT_AF_PIN       1
+#define UART_TRAIT_TX_COMPLETE_PENDING 1
+#define USE_PLATFORM_UART_IRQ_HANDLERS
 #define SERIAL_TRAIT_PIN_CONFIG 1
 #define I2C_TRAIT_AF_PIN        1
 #define I2CDEV_COUNT            4

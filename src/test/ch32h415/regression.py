@@ -142,9 +142,11 @@ int main(void) {
 ''', extra_flags=('-Wall','-Wextra','-I'+str(host_include),'-I'+str(root/'src/main'),'-I'+str(root/'src/platform/CH32/include')))
 run('theia_dma_reservation', '''
 #define USE_PLATFORM_DMA_FILTER
+#define USE_THEIA_OSD
 #define DMA2_CH6_HANDLER 14
 #define DMA_IDENTIFIER_TO_INDEX(x) ((x)-1)
 #define OWNER_FREE 0
+#define UNUSED(x) ((void)(x))
 typedef int dmaIdentifier_e;
 typedef int resourceOwner_e;
 typedef struct { struct { int owner, index; } resourceOwner; } dmaChannelDescriptor_t;
@@ -152,12 +154,16 @@ static dmaChannelDescriptor_t dmaDescriptors[16];
 static int dmaGetHandlerCount(void) { return 16; }
 ''' + fn('src/platform/CH32/dma_ch32h41x.c','bool dmaIsReserved(')
     + fn('src/main/drivers/dma.c','bool dmaAllocate(') + '''
+#undef USE_THEIA_OSD
+static bool dmaIsReservedNoOsd(dmaIdentifier_e identifier)
+''' + fn('src/platform/CH32/dma_ch32h41x.c','bool dmaIsReserved(').split('bool dmaIsReserved(dmaIdentifier_e identifier)', 1)[1] + '''
 int main(void) {
     if (dmaAllocate(DMA2_CH6_HANDLER, 2, 1)) return 1;
     if (dmaDescriptors[13].resourceOwner.owner != OWNER_FREE) return 2;
     if (!dmaAllocate(13, 2, 1) || dmaAllocate(13, 3, 1)) return 3;
     if (dmaAllocate(0, 2, 1) || dmaAllocate(17, 2, 1)) return 4;
-    puts("Theia DMA channel remains reserved; ordinary allocation is unchanged");
+    if (dmaIsReservedNoOsd(DMA2_CH6_HANDLER)) return 5;
+    puts("Theia DMA channel reserved in OSD builds and available when OSD is disabled");
 }
 ''')
 run('rcc_high_bit', '''
@@ -1306,6 +1312,9 @@ run('boot_button_sdi', '''
 #define GPIO_Mode_IPD 2
 #define RCC_HB2Periph_GPIOC 16
 #define ENABLE 1
+#define ARMED 1u
+static unsigned armingFlags;
+#define ARMING_FLAG(mask) (armingFlags & (mask))
 typedef uint32_t timeUs_t;
 typedef struct { unsigned GPIO_Pin, GPIO_Speed, GPIO_Mode; } GPIO_InitTypeDef;
 typedef struct { unsigned INDR; } gpio_t;
@@ -1326,18 +1335,34 @@ static void ch32h415UsbReleaseForDebug(void) { handoffs++; }
     + fn('src/platform/CH32/target/CH32H415/boot_sdi.c', 'void ch32h415BootSdiSystemTask(') + '''
 int main(void) {
     uint32_t t = UINT32_MAX - 1000u;
+    /* Armed craft must never initialize PC8 or release USB even if held > 5s */
+    armingFlags = ARMED;
+    port.INDR = GPIO_Pin_8;
     ch32h415BootSdiSystemTask(t);
-    if (initCount != 1 || handoffs) return 1;
+    ch32h415BootSdiSystemTask(t + 6000000u);
+    if (initCount != 0 || handoffs != 0) return 1;
+
+    armingFlags = 0;
+    port.INDR = 0;
+    ch32h415BootSdiSystemTask(t);
+    if (initCount != 1 || handoffs) return 2;
+    port.INDR = GPIO_Pin_8; ch32h415BootSdiSystemTask(t);
+    /* Arming mid-hold must cancel the pending hold timer */
+    armingFlags = ARMED;
+    t += 5000000u; ch32h415BootSdiSystemTask(t);
+    if (handoffs) return 3;
+    armingFlags = 0;
+    port.INDR = 0; ch32h415BootSdiSystemTask(t);
     port.INDR = GPIO_Pin_8; ch32h415BootSdiSystemTask(t);
     t += 4999999u; ch32h415BootSdiSystemTask(t);
-    if (handoffs) return 2;
+    if (handoffs) return 4;
     port.INDR = 0; ch32h415BootSdiSystemTask(t);
     port.INDR = GPIO_Pin_8; ch32h415BootSdiSystemTask(t);
     t += 5000000u; ch32h415BootSdiSystemTask(t);
-    if (handoffs != 1 || initCount != 1) return 3;
+    if (handoffs != 1 || initCount != 1) return 5;
     port.INDR = 0; ch32h415BootSdiSystemTask(t+10);
     port.INDR = GPIO_Pin_8; ch32h415BootSdiSystemTask(t+6000000u);
-    return handoffs != 1 || tasks != 8;
+    return handoffs != 1 || tasks != 13;
 }
 ''')
 
@@ -1420,6 +1445,7 @@ int main(void){int scl=0,sda=0,reg=0;i2cHardware_t hw={.reg=&reg};i2cDevice[0]=(
 
 pre='''
 #define USE_PLATFORM_TIMER_FILTER
+#define USE_THEIA_OSD
 #define TIMER_CHANNEL_COUNT 3
 typedef int ioTag_t;
 typedef struct {int unused;} TIM_TypeDef;
@@ -1438,15 +1464,18 @@ static int ioToken;
 static void *IOGetByTag(ioTag_t tag){return tag == 1 ? &ioToken : NULL;}
 '''
 run('timer_af_index',pre+fn('src/platform/CH32/timer_ch32h41x.c','bool timerPlatformIsAvailable(')+fn('src/main/drivers/timer_common.c','const timerHardware_t *timerGetByTagAndIndex')+'''
+#undef USE_THEIA_OSD
+static bool timerPlatformIsAvailableNoOsd(const timerHardware_t *timerHardware)
+''' + fn('src/platform/CH32/timer_ch32h41x.c','bool timerPlatformIsAvailable(').split('bool timerPlatformIsAvailable(const timerHardware_t *timerHardware)', 1)[1] + '''
 int main(void){
  const timerHardware_t *first=timerGetByTagAndIndex(1,1), *second=timerGetByTagAndIndex(1,2);
  if (!first || first->tim!=TIM5 || !second || second->tim!=TIM9) return 1;
- timerHardware_t hw={1,TIM2}; if (timerPlatformIsAvailable(&hw)) return 2;
- hw.tim=TIM10; if (timerPlatformIsAvailable(&hw)) return 3;
- hw.tim=TIM11; if (timerPlatformIsAvailable(&hw)) return 4;
- hw.tim=TIM12; if (timerPlatformIsAvailable(&hw)) return 5;
- hw.tim=TIM5; hw.tag=2; if (timerPlatformIsAvailable(&hw)) return 6;
- puts("Theia timers and unavailable pins remain excluded");
+ timerHardware_t hw={1,TIM2}; if (timerPlatformIsAvailable(&hw) || !timerPlatformIsAvailableNoOsd(&hw)) return 2;
+ hw.tim=TIM10; if (timerPlatformIsAvailable(&hw) || !timerPlatformIsAvailableNoOsd(&hw)) return 3;
+ hw.tim=TIM11; if (timerPlatformIsAvailable(&hw) || !timerPlatformIsAvailableNoOsd(&hw)) return 4;
+ hw.tim=TIM12; if (timerPlatformIsAvailable(&hw) || !timerPlatformIsAvailableNoOsd(&hw)) return 5;
+ hw.tim=TIM5; hw.tag=2; if (timerPlatformIsAvailable(&hw) || timerPlatformIsAvailableNoOsd(&hw)) return 6;
+ puts("Theia timers excluded in OSD builds and available when OSD is disabled");
 }
 ''')
 
@@ -1706,6 +1735,8 @@ int main(void) {
 run('dma_mux_enable_bounds_and_clocks', dma_enum + '''
 typedef int dmaIdentifier_e;
 #define USE_PLATFORM_DMA_FILTER
+#define USE_THEIA_OSD
+#define UNUSED(x) ((void)(x))
 #define DMA_NONE 0
 #define DMA_FIRST_HANDLER 1
 #define DMA2_CH6_HANDLER (DMA_FIRST_HANDLER + 13)

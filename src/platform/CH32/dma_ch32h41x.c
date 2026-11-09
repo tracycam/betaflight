@@ -61,7 +61,12 @@ dmaChannelDescriptor_t dmaDescriptors[DMA_LAST_HANDLER] = {
 #ifdef USE_PLATFORM_DMA_FILTER
 bool dmaIsReserved(dmaIdentifier_e identifier)
 {
+#ifdef USE_THEIA_OSD
     return identifier == DMA2_CH6_HANDLER;
+#else
+    UNUSED(identifier);
+    return false;
+#endif
 }
 #endif
 

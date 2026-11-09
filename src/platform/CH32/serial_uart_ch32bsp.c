@@ -337,4 +337,37 @@ FAST_IRQ_HANDLER void uartIrqHandler(uartPort_t *s)
         }
     }
 }
+
+#define CH32_UART_IRQ_HANDLER(number, dev)                \
+    __FAST_INTERRUPT FAST_IRQ_HANDLER                     \
+    void USART ## number ## _IRQHandler(void)             \
+    {                                                     \
+        uartPort_t *uartPort = &(uartDevice[(dev)].port); \
+        uartIrqHandler(uartPort);                         \
+    }
+
+#ifdef USE_UART1
+CH32_UART_IRQ_HANDLER(1, UARTDEV_1)
+#endif
+#ifdef USE_UART2
+CH32_UART_IRQ_HANDLER(2, UARTDEV_2)
+#endif
+#ifdef USE_UART3
+CH32_UART_IRQ_HANDLER(3, UARTDEV_3)
+#endif
+#ifdef USE_UART4
+CH32_UART_IRQ_HANDLER(4, UARTDEV_4)
+#endif
+#ifdef USE_UART5
+CH32_UART_IRQ_HANDLER(5, UARTDEV_5)
+#endif
+#ifdef USE_UART6
+CH32_UART_IRQ_HANDLER(6, UARTDEV_6)
+#endif
+#ifdef USE_UART7
+CH32_UART_IRQ_HANDLER(7, UARTDEV_7)
+#endif
+#ifdef USE_UART8
+CH32_UART_IRQ_HANDLER(8, UARTDEV_8)
+#endif
 #endif // USE_UART

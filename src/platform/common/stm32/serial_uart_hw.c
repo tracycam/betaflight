@@ -111,7 +111,7 @@ uartPort_t *serialUART(uartDevice_t *uartdev, uint32_t baudRate, portMode_e mode
 
 #ifdef USE_DMA
     uartConfigureDma(uartdev);
-#if defined(USE_CHBSP_DRIVER)
+#if UART_TRAIT_TX_COMPLETE_PENDING
     s->txCompletePending = false;
 #endif
     s->txDMAEmpty = true;
