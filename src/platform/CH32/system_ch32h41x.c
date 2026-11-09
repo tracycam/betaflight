@@ -42,9 +42,20 @@ bool usbCableIsActive(void)
 }
 #endif
 
+#define CH32_FLASH_RESET_WAIT_LIMIT 0x02000000U
+
+static void ch32WaitFlashIdleBeforeReset(void)
+{
+    for (uint32_t timeout = CH32_FLASH_RESET_WAIT_LIMIT;
+         timeout != 0U && (FLASH->STATR & (FLASH_STATR_BSY | FLASH_STATR_WRBSY)) != 0U;
+         timeout--) {
+    }
+}
+
 void systemReset(void)
 {
     __disable_irq();
+    ch32WaitFlashIdleBeforeReset();
     asm volatile ("fence iorw, iorw" ::: "memory");
     NVIC_SystemReset();
 }

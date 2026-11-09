@@ -379,6 +379,21 @@ static bool ch32ConfigAddressIsValid(uintptr_t address, uint32_t eraseSize)
         address % CONFIG_STREAMER_BUFFER_SIZE == 0 &&
         address >= start && address <= end - CONFIG_STREAMER_BUFFER_SIZE;
 }
+
+static void ch32InvalidateFlashCache(void)
+{
+#if defined(__riscv)
+    // QingKe V5F caches reads from the internal flash window (0x08000000+) via
+    // CSR 0xBC2. Invalidate cached lines via CSR 0xBD0 bit 2 after flash erase
+    // or fast-page programming so readback verification observes physical flash.
+    __asm volatile (
+        "fence iorw, iorw\n\t"
+        "csrwi 0xbd0, 0x4\n\t"
+        "fence.i"
+        : : : "memory"
+    );
+#endif
+}
 #endif
 
 void configUnlock(void)
@@ -437,6 +452,7 @@ void configLock(void)
         DAL_FLASH_Lock();
 #elif defined(CH32H4)
         FLASH_Lock_Fast();
+        ch32InvalidateFlashCache();
 #else
         FLASH_Lock();
 #endif
@@ -646,15 +662,18 @@ configStreamerResult_e configWriteWord(uintptr_t address, config_streamer_buffer
     }
     if (address % eraseSize == 0) {
         const FLASH_Status status = FLASH_ErasePage(address);
+        ch32InvalidateFlashCache();
         if (status != FLASH_COMPLETE) {
             return CONFIG_RESULT_FAILURE;
         }
     }
     STATIC_ASSERT(CONFIG_STREAMER_BUFFER_SIZE == sizeof(uint32_t) * 64, "CONFIG_STREAMER_BUFFER_SIZE does not match written size");
     if (FLASH_ProgramPage_Fast(address, buffer) != FLASH_COMPLETE) {
+        ch32InvalidateFlashCache();
         return CONFIG_RESULT_TIMEOUT;
     }
     const FLASH_Status status = FLASH_GetStatus();
+    ch32InvalidateFlashCache();
     if (status != FLASH_COMPLETE) {
         return CONFIG_RESULT_ADDRESS_INVALID;
     }
