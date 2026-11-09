@@ -991,6 +991,44 @@ int main(void) {
     puts("host stall is bounded and the timeout resets when transmission progresses");
 }
 ''')
+run('printf_vcp_no_10ms_stall', '''
+#define PLATFORM_VCP_TX_STALL_TIMEOUT_MS 500
+#define USE_VCP
+#define SERIAL_PORT_USB_VCP 1
+typedef struct { int identifier; } serialPort_t;
+static uint32_t nowMs, freeBytes, emptyChecks, ignoreCalls;
+static bool completeOnCheck3;
+static uint32_t millis(void) { return nowMs; }
+static uint32_t serialTxBytesFree(serialPort_t *p) { (void)p; return freeBytes; }
+static void schedulerIgnoreTaskExecTime(void) {
+    ignoreCalls++;
+    if (!completeOnCheck3) {
+        nowMs += 100;
+        if (nowMs == 300) {
+            freeBytes++;
+        }
+    }
+}
+static bool isSerialTransmitBufferEmpty(serialPort_t *p) {
+    (void)p;
+    emptyChecks++;
+    return completeOnCheck3 && emptyChecks >= 3;
+}
+''' + fn('src/main/common/printf_serial.c','static void waitForPrintfTransmitComplete(') + '''
+int main(void) {
+    serialPort_t p={SERIAL_PORT_USB_VCP};
+    /* Fast microframe drain completes with zero millisecond sleep */
+    nowMs=0; emptyChecks=ignoreCalls=0; completeOnCheck3=true;
+    waitForPrintfTransmitComplete(&p);
+    if (nowMs != 0 || emptyChecks != 3 || ignoreCalls != 2) return 1;
+
+    /* Stalled host terminates at PLATFORM_VCP_TX_STALL_TIMEOUT_MS after last progress */
+    nowMs=0; freeBytes=0; emptyChecks=ignoreCalls=0; completeOnCheck3=false;
+    waitForPrintfTransmitComplete(&p);
+    if (nowMs != 800 || ignoreCalls != 8) return 2;
+    puts("printf VCP drain avoids 10ms sleep while bounding host stalls and discounting task time");
+}
+''')
 for mps in (64, 512):
  run('usb_zlp_mps_'+str(mps), '''
 #define NVIC_PRIO_USB 0
@@ -1048,6 +1086,8 @@ typedef int serialPort_t;
 static timeUs_t micros(void){return now_ms*1000;}
 static uint32_t millis(void){return now_ms;}
 static void delay(int ms){now_ms+=ms;}
+static unsigned ignoredExecCalls;
+static void schedulerIgnoreTaskExecTime(void){ignoredExecCalls++;}
 static bool usbVcpIsConnected(void){return true;}
 static bool usbIsConnected(void){return true;}
 static bool usbIsConfigured(void){return true;}
@@ -2071,6 +2111,7 @@ static void delay(int ms) {
     nowUs += (uint32_t)ms * 1000u;
     pumpUsbInCompletions();
 }
+static void schedulerIgnoreTaskExecTime(void) {}
 ''' + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
     + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
     + fn(usb, 'static void usbVcpKickTx(void)')
@@ -2469,6 +2510,7 @@ static uint32_t nowMs, zlpSent, dataChunksSent, failNextZlp;
 static timeUs_t micros(void) { return nowMs * 1000u; }
 static uint32_t millis(void) { return nowMs; }
 static void delay(int ms) { nowMs += (uint32_t)ms; }
+static void schedulerIgnoreTaskExecTime(void) {}
 void usbVcpResetState(void);
 void usbVcpTxDoneISR(void);
 uint16_t usb_vcp_send_data(uint8_t busid, uint8_t *buffer, uint16_t len);

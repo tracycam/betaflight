@@ -40,6 +40,8 @@
 
 #include "pg/usb.h"
 
+#include "scheduler/scheduler.h"
+
 #include "cdc_vcp_ch32h41x.h"
 #include "usb_ch32h41x.h"
 #include "usbd_core.h"
@@ -269,6 +271,7 @@ uint32_t CDC_Send_DATA(const uint8_t *ptrBuffer, uint32_t sendLength)
                 }
             }
             delay(1);
+            schedulerIgnoreTaskExecTime();
         }
     }
 
@@ -356,6 +359,11 @@ static void usbVcpWriteBuf(serialPort_t *instance, const void *data, int count)
         count -= txed;
         p += txed;
 
+        if (count > 0) {
+            // USB backpressure wait is not task execution time.
+            schedulerIgnoreTaskExecTime();
+        }
+
         if (txed == 0 || millis() - start >= USB_TIMEOUT) {
             break;
         }
@@ -381,6 +389,11 @@ static bool usbVcpFlush(vcpPort_t *port)
         uint32_t txed = CDC_Send_DATA(p, count);
         count -= txed;
         p += txed;
+
+        if (count > 0) {
+            // USB backpressure wait is not task execution time.
+            schedulerIgnoreTaskExecTime();
+        }
 
         if (txed == 0 || millis() - start >= USB_TIMEOUT) {
             break;
