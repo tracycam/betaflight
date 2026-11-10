@@ -2180,12 +2180,22 @@ case MSP_NAME:
 #define SENSOR_NOT_AVAILABLE 0xFF
 
 #if defined(USE_GYRO)
+#ifdef IMU_42688_VIEW_COMPACT
+        sbufWriteU8(dst, (detectedSensors[SENSOR_INDEX_GYRO] != GYRO_NONE && detectedSensors[SENSOR_INDEX_GYRO] != GYRO_DEFAULT)
+            ? GYRO_ICM42688P : detectedSensors[SENSOR_INDEX_GYRO]);
+#else
         sbufWriteU8(dst, detectedSensors[SENSOR_INDEX_GYRO]);
+#endif
 #else
         sbufWriteU8(dst, SENSOR_NOT_AVAILABLE);
 #endif
 #if defined(USE_ACC)
+#ifdef IMU_42688_VIEW_COMPACT
+        sbufWriteU8(dst, (detectedSensors[SENSOR_INDEX_ACC] != ACC_NONE && detectedSensors[SENSOR_INDEX_ACC] != ACC_DEFAULT)
+            ? ACC_ICM42688P : detectedSensors[SENSOR_INDEX_ACC]);
+#else
         sbufWriteU8(dst, detectedSensors[SENSOR_INDEX_ACC]);
+#endif
 #else
         sbufWriteU8(dst, SENSOR_NOT_AVAILABLE);
 #endif
@@ -2215,7 +2225,12 @@ case MSP_NAME:
 #ifdef USE_GYRO
         sbufWriteU8(dst, GYRO_COUNT);
         for (unsigned i = 0; i < GYRO_COUNT; i++) {
+#ifdef IMU_42688_VIEW_COMPACT
+            sbufWriteU8(dst, (detectedGyros[i] != GYRO_NONE && detectedGyros[i] != GYRO_DEFAULT)
+                ? GYRO_ICM42688P : detectedGyros[i]);
+#else
             sbufWriteU8(dst, detectedGyros[i]);
+#endif
         }
 #endif
         break;
