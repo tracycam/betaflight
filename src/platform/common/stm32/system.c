@@ -228,7 +228,7 @@ uint32_t getCycleCounter(void)
 int32_t clockCyclesToMicros(int32_t clockCycles)
 {
 #if defined(CH32H4)
-    return clockCycles / CYCLE_TICKS_PER_US;
+    return clockCycles / (int32_t)CYCLE_TICKS_PER_US;
 #else
     return clockCycles / usTicks;
 #endif
@@ -247,7 +247,7 @@ float clockCyclesToMicrosf(int32_t clockCycles)
 int32_t clockCyclesTo10thMicros(int32_t clockCycles)
 {
 #if defined(CH32H4)
-    return (int32_t)((int64_t)clockCycles * 10 / CYCLE_TICKS_PER_US);
+    return (int32_t)((int64_t)clockCycles * 10 / (int32_t)CYCLE_TICKS_PER_US);
 #else
     return 10 * clockCycles / (int32_t)usTicks;
 #endif
@@ -257,7 +257,7 @@ int32_t clockCyclesTo10thMicros(int32_t clockCycles)
 int32_t clockCyclesTo100thMicros(int32_t clockCycles)
 {
 #if defined(CH32H4)
-    return (int32_t)((int64_t)clockCycles * 100 / CYCLE_TICKS_PER_US);
+    return (int32_t)((int64_t)clockCycles * 100 / (int32_t)CYCLE_TICKS_PER_US);
 #else
     return 100 * clockCycles / (int32_t)usTicks;
 #endif

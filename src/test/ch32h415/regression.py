@@ -201,7 +201,7 @@ run('flash_fast_wait', '''
 #define ProgramTimeout 8
 static struct { uint32_t STATR; } registers;
 #define FLASH (&registers)
-''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','static uint32_t FLASH_FastWait(') + '''
+''' + fn('lib/modules/CH32H41x/Peripheral/src/ch32h417_flash.c','static uint32_t FLASH_FastWait(') + '''
 int main(void) {
     registers.STATR=0;
     if (!FLASH_FastWait(3)) return 1;
@@ -228,8 +228,8 @@ static struct { uint32_t STATR, CTLR; } registers;
 #define FLASH (&registers)
 static unsigned waits, failAt, syncs;
 static bool raiseWrpOnCommit;
-''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','static uint32_t FLASH_FastIrqSave(')
-    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','static void FLASH_FastIrqRestore(') + '''
+''' + fn('lib/modules/CH32H41x/Peripheral/src/ch32h417_flash.c','static uint32_t FLASH_FastIrqSave(')
+    + fn('lib/modules/CH32H41x/Peripheral/src/ch32h417_flash.c','static void FLASH_FastIrqRestore(') + '''
 static void FLASH_RegSync(void) {
     (void)*(volatile uint32_t *)&FLASH->CTLR;
     syncs++;
@@ -247,7 +247,7 @@ static uint32_t FLASH_FastWait(uint32_t mask) {
     return 1;
 }
 static uint32_t flash[64] __attribute__((aligned(256)));
-''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_ProgramPage_Fast(') + '''
+''' + fn('lib/modules/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_ProgramPage_Fast(') + '''
 int main(void) {
     uint32_t input[64]; for (unsigned i=0; i<64; i++) input[i]=i+1;
     if ((uintptr_t)flash > UINT32_MAX) return 1;
@@ -311,11 +311,11 @@ static void FLASH_RegSync(void) {
         }
     }
 }
-''' + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_GetStatus(')
-    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_WaitForLastOperation(')
-    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_ErasePage(')
-    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','void FLASH_Unlock_Fast(')
-    + fn('lib/main/CH32H41x/Peripheral/src/ch32h417_flash.c','void FLASH_Lock_Fast(') + '''
+''' + fn('lib/modules/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_GetStatus(')
+    + fn('lib/modules/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_WaitForLastOperation(')
+    + fn('lib/modules/CH32H41x/Peripheral/src/ch32h417_flash.c','FLASH_Status FLASH_ErasePage(')
+    + fn('lib/modules/CH32H41x/Peripheral/src/ch32h417_flash.c','void FLASH_Unlock_Fast(')
+    + fn('lib/modules/CH32H41x/Peripheral/src/ch32h417_flash.c','void FLASH_Lock_Fast(') + '''
 int main(void) {
     registers.STATR=SR_WR_BSY;
     if (FLASH_GetStatus() != FLASH_BUSY) return 1;
@@ -912,10 +912,10 @@ static void usbd_cdc_acm_set_rts(uint8_t bus, uint8_t intf, bool value) { (void)
 static void usbd_cdc_acm_send_break(uint8_t bus, uint8_t intf) { (void)bus; (void)intf; }
 ''' + fn(usb,'void CDC_SetBaudRateCb(') + fn(usb,'void CDC_SetCtrlLineStateCb(')
     + fn(usb,'void usbVcpBaudRateChanged(') + fn(usb,'void usbVcpControlLineStateChanged(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c','void usbd_cdc_acm_set_line_coding(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c','void usbd_cdc_acm_get_line_coding(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c','void usbd_cdc_acm_set_control_line_state(')
-    + fn('lib/main/CH32H41x/middlewares/class/cdc/usbd_cdc_acm.c','static int cdc_acm_class_interface_request_handler(') + '''
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c','void usbd_cdc_acm_set_line_coding(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c','void usbd_cdc_acm_get_line_coding(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c','void usbd_cdc_acm_set_control_line_state(')
+    + fn('lib/modules/CH32H41x/middlewares/class/cdc/usbd_cdc_acm.c','static int cdc_acm_class_interface_request_handler(') + '''
 static unsigned baudCalls, stateCalls, seenBaud, seenState;
 static void onBaud(void *ctx, uint32_t baud) { if (ctx) { baudCalls++; seenBaud=baud; } }
 static void onState(void *ctx, uint16_t state) { if (ctx) { stateCalls++; seenState=state; } }
@@ -1591,7 +1591,7 @@ int main(void){USART_TypeDef usart={.CTLR1=USART_CTLR1_TCIE};dma_t reg={.CFGR=1,
  return reg.CFGR!=0||monitorCalls!=1||d.port.txCompletePending;}
 ''')
 
-dma_hdr = (root/'lib/main/CH32H41x/Peripheral/inc/ch32h417_dma.h').read_text()
+dma_hdr = (root/'lib/modules/CH32H41x/Peripheral/inc/ch32h417_dma.h').read_text()
 dma_enum = dma_hdr[dma_hdr.index('typedef enum'):dma_hdr.index('} dmamux_requst_id_sel_type;')+len('} dmamux_requst_id_sel_type;')]
 reqmap_txt = (root/'src/platform/CH32/dma_reqmap_mcu.c').read_text()
 reqmap_body = reqmap_txt[reqmap_txt.index('typedef struct dmaPeripheralMapping_s'):reqmap_txt.index('const dmaChannelSpec_t *dmaGetChannelSpecByTimer(')]
@@ -2145,8 +2145,8 @@ static void delay(int ms) {
     pumpUsbInCompletions();
 }
 static void schedulerIgnoreTaskExecTime(void) {}
-''' + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
+''' + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
     + fn(usb, 'static void usbVcpKickTx(void)')
     + fn(usb, 'void usbVcpTxDoneISR(void)')
     + fn(usb, 'uint32_t CDC_Send_FreeBytes(void)')
@@ -2202,8 +2202,8 @@ static int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *d
     deliveredLen = data_len;
     return 0;
 }
-''' + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
+''' + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
     + fn(usb, 'static void usbVcpKickTx(void)')
     + fn(usb, 'void usbVcpTxDoneISR(void)')
     + fn(usb, 'void usb_int_rxsof_handler(void)') + '''
@@ -2247,10 +2247,10 @@ int main(void) {
 }
 ''')
 
-usb_cfg_text = (root / 'lib/main/CH32H41x/middlewares/board/usb_config.h').read_text()
+usb_cfg_text = (root / 'lib/modules/CH32H41x/middlewares/board/usb_config.h').read_text()
 if '\n#define CONFIG_USBDEV_MSC_POLLING\n' not in usb_cfg_text:
     raise RuntimeError('usb_config.h must enable CONFIG_USBDEV_MSC_POLLING')
-usbd_msc_body = ('#define MSD_OUT_EP_IDX 0' + (root / 'lib/main/CH32H41x/middlewares/class/msc/usbd_msc.c').read_text().split('#define MSD_OUT_EP_IDX 0', 1)[1]).split('__WEAK void usbd_msc_get_cap', 1)[0]
+usbd_msc_body = ('#define MSD_OUT_EP_IDX 0' + (root / 'lib/modules/CH32H41x/middlewares/class/msc/usbd_msc.c').read_text().split('#define MSD_OUT_EP_IDX 0', 1)[1]).split('__WEAK void usbd_msc_get_cap', 1)[0]
 run('usb_msc_polling_and_readonly', '''
 #define UNUSED(x) ((void)(x))
 #define __PACKED __attribute__((packed))
@@ -2390,9 +2390,9 @@ int main(void) {
     if (lastInLen != 18 || lastInBuf[2] != 0x07u || lastInBuf[12] != 0x27u || lastInBuf[13] != 0x00u) return 10;
     puts("MSC polling defers storage I/O out of ISR and preserves WP across USB reset, MODE SENSE 6/10, and WRITE(10)");
 }
-''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/class/msc'), '-I' + str(root / 'src/platform/CH32/include')))
+''', extra_flags=('-I' + str(root / 'lib/modules/CH32H41x/middlewares/class/msc'), '-I' + str(root / 'src/platform/CH32/include')))
 
-usbhs_reg_body = ('#define USB_BASE 0x40030000u' + (root / 'lib/main/CH32H41x/middlewares/ch32h41x_hs/usb_ch32h41x_usbhs_reg.c').read_text().split('#define USB_BASE 0x40030000u', 1)[1]).split('void USBHS_IRQHandler(void)', 1)[0]
+usbhs_reg_body = ('#define USB_BASE 0x40030000u' + (root / 'lib/modules/CH32H41x/middlewares/ch32h41x_hs/usb_ch32h41x_usbhs_reg.c').read_text().split('#define USB_BASE 0x40030000u', 1)[1]).split('void USBHS_IRQHandler(void)', 1)[0]
 run('usb_hs_ep_done_clear_order', '''
 #define _GNU_SOURCE
 #include <sys/mman.h>
@@ -2498,7 +2498,7 @@ int main(void) {
     if (suspendCalls != 1 || resumeCalls != 1) return 9;
     puts("USBHS clears T_DONE/R_DONE before re-arming, preserves 512B HS MPS, and dispatches suspend/resume");
 }
-''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/ch32h41x_hs'),))
+''', extra_flags=('-I' + str(root / 'lib/modules/CH32H41x/middlewares/ch32h41x_hs'),))
 
 run('usb_vcp_suspend_and_stall_latch', '''
 #define UNUSED(x) ((void)(x))
@@ -2565,9 +2565,9 @@ static int usbd_ep_start_write(uint8_t busid, const uint8_t ep, const uint8_t *d
     + fn(usb, 'uint32_t CDC_Send_FreeBytes(void)')
     + fn(usb, 'uint32_t CDC_Send_DATA(')
     + fn(usb, 'static void usbVcpWriteBuf(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static void usbd_event_handler(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(') + '''
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static void usbd_event_handler(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(') + '''
 int main(void) {
     static uint8_t payload[APP_TX_DATA_SIZE];
     /* 1. Resume before CONFIGURED must NOT forge CONFIGURED */
@@ -2856,7 +2856,7 @@ int main(void) {
     if (lastInLen != sizeof(csw) || csw.bStatus != CSW_STATUS_CMD_FAILED) return 8;
     puts("MSC survives async USB reset during sector I/O, guards 32-bit LBA overflow, and serves dynamic INQUIRY");
 }
-''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/class/msc'), '-I' + str(root / 'src/platform/CH32/include')))
+''', extra_flags=('-I' + str(root / 'lib/modules/CH32H41x/middlewares/class/msc'), '-I' + str(root / 'src/platform/CH32/include')))
 
 run('ws2811_ledstrip_dma_and_isr', '''
 #define USE_DMA_SPEC
@@ -3680,7 +3680,7 @@ int main(void) {
 
     puts("USBHS toggle mismatch, EP0 DMA/stall safety, 512B CBW guard, BOT Reset-Recovery/Abort-IN, VERIFY(10), and 0-block media verified");
 }
-''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/ch32h41x_hs'), '-I' + str(root / 'lib/main/CH32H41x/middlewares/class/msc')))
+''', extra_flags=('-I' + str(root / 'lib/modules/CH32H41x/middlewares/ch32h41x_hs'), '-I' + str(root / 'lib/modules/CH32H41x/middlewares/class/msc')))
 
 run('usb_vcp_cold_boot_fs_mps_and_rx_nak', '''
 #define UNUSED(x) ((void)(x))
@@ -3781,19 +3781,19 @@ void usbVcpResetState(void);
 void usbVcpTxDoneISR(void);
 uint16_t usb_vcp_send_data(uint8_t busid, uint8_t *buffer, uint16_t len);
 ''' + fn('src/platform/CH32/usb_ch32h41x.h', 'static inline const char *ch32UsbGetUidSerialString(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static const uint8_t *config_descriptor_callback(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static const uint8_t *other_speed_descriptor_callback(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static const char *string_descriptor_callback(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static uint16_t usbVcpOutMps(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static const uint8_t *config_descriptor_callback(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static const uint8_t *other_speed_descriptor_callback(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static const char *string_descriptor_callback(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static uint16_t usbVcpOutMps(')
     + '#define USB_VCP_OUT_MPS(busid) (usbVcpOutMps(busid))\n'
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static uint16_t usbVcpRxUsedLocked(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static uint16_t usbVcpRxFreeLocked(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static void usbd_event_handler(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_out(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_rx_available(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_get_rx_data(')
-    + fn('lib/main/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static uint16_t usbVcpRxUsedLocked(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static uint16_t usbVcpRxFreeLocked(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'static void usbd_event_handler(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_out(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'void usbd_cdc_acm_bulk_in(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_rx_available(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_get_rx_data(')
+    + fn('lib/modules/CH32H41x/middlewares/board/cdc_vcp_ch32h41x.c', 'uint16_t usb_vcp_send_data(')
     + fn(usb, 'static uint16_t usbVcpBulkInMps(')
     + '#define USB_VCP_BULK_IN_MPS (usbVcpBulkInMps())\n'
     + fn(usb, 'void CDC_SetBaudRateCb(')
@@ -3885,4 +3885,37 @@ int main(void) {
 
     puts("cold-boot VCP disconnect state, FS/HS descriptors & ZLP, UID serial, baud trampoline, and lossless RX NAK backpressure verified");
 }
-''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/common'), '-I' + str(root / 'lib/main/CH32H41x/middlewares/class/cdc')))
+''', extra_flags=('-I' + str(root / 'lib/modules/CH32H41x/middlewares/common'), '-I' + str(root / 'lib/modules/CH32H41x/middlewares/class/cdc')))
+
+run('clock_cycles_and_target_io_masks', '''
+#define CH32H4
+static uint32_t SystemCoreClock = 350000000u;
+#define CYCLE_TICKS_PER_US (SystemCoreClock / 1000000)
+''' + fn('src/platform/common/stm32/system.c', 'int32_t clockCyclesToMicros(')
+    + fn('src/platform/common/stm32/system.c', 'int32_t clockCyclesTo10thMicros(')
+    + fn('src/platform/common/stm32/system.c', 'int32_t clockCyclesTo100thMicros(') + '''
+#include "target.h"
+static const uint16_t osdPortA = TARGET_IO_PORTA;
+static const uint16_t osdPortB = TARGET_IO_PORTB;
+static const uint16_t osdPortC = TARGET_IO_PORTC;
+static const char boardId[] = TARGET_BOARD_IDENTIFIER;
+#undef TARGET_IO_PORTA
+#undef TARGET_IO_PORTB
+#undef TARGET_IO_PORTC
+#undef TARGET_IO_PORTD
+#undef TARGET_IO_PORTE
+#undef TARGET_IO_PORTF
+#undef USE_THEIA_OSD
+#define CH32H415_NO_THEIA_OSD
+''' + (root / 'src/platform/CH32/target/CH32H415/target.h').read_text().replace('#pragma once', '') + '''
+int main(void) {
+    if (clockCyclesToMicros(-700) != -2 || clockCyclesToMicros(700) != 2) return 1;
+    if (clockCyclesTo10thMicros(-350) != -10 || clockCyclesTo100thMicros(-350) != -100) return 2;
+    if (clockCyclesTo100thMicros(INT32_MAX) <= 0 || clockCyclesTo100thMicros(INT32_MIN + 1) >= 0) return 3;
+    if (strlen(boardId) != 4 || strcmp(boardId, "H415") != 0) return 4;
+    if (osdPortA != 0xef1f || osdPortB != 0xff7c || osdPortC != 0xffef) return 5;
+    if (TARGET_IO_PORTA != 0xffff || TARGET_IO_PORTB != 0xffff || TARGET_IO_PORTC != 0xffff) return 6;
+    if ((TARGET_IO_PORTB & (1u << 7)) == 0) return 7;
+    puts("signed cycle conversions, 4-char H415 board ID, and conditional OSD IO masks verified");
+}
+''', extra_flags=('-I' + str(root / 'src/platform/CH32/target/CH32H415'),))

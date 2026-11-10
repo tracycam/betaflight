@@ -24,7 +24,7 @@
 #pragma once
 
 #ifndef TARGET_BOARD_IDENTIFIER
-#define TARGET_BOARD_IDENTIFIER "CH415"
+#define TARGET_BOARD_IDENTIFIER "H415"
 #endif
 
 #ifndef USBD_PRODUCT_STRING
@@ -89,7 +89,7 @@
 #define USE_UART8
 #endif
 
-#ifndef USE_THEIA_OSD
+#if !defined(USE_THEIA_OSD) && !defined(CH32H415_NO_THEIA_OSD)
 #define USE_THEIA_OSD
 #endif
 #ifndef USE_PLATFORM_DMA_FILTER
@@ -98,6 +98,7 @@
 #ifndef USE_PLATFORM_TIMER_FILTER
 #define USE_PLATFORM_TIMER_FILTER
 #endif
+#ifdef USE_THEIA_OSD
 /* PA5/6/7/12, PB0/1/7 and PC4 are exclusively owned by TheiaOSD. */
 #define TARGET_IO_PORTA         0xef1f
 #define TARGET_IO_PORTB         0xff7c
@@ -105,6 +106,15 @@
 #define TARGET_IO_PORTC         0xfeef  // PC8 is the BOOT button
 #else
 #define TARGET_IO_PORTC         0xffef
+#endif
+#else
+#define TARGET_IO_PORTA         0xffff
+#define TARGET_IO_PORTB         0xffff
+#ifdef CH32H415_BOOT_SDI
+#define TARGET_IO_PORTC         0xfeff  // PC8 is the BOOT button
+#else
+#define TARGET_IO_PORTC         0xffff
+#endif
 #endif
 #define TARGET_IO_PORTD         0xffff
 #define TARGET_IO_PORTE         0xffff
