@@ -1,10 +1,25 @@
-# CH32 RISC-V WCH toolchain
+# CH32 RISC-V WCH toolchain and CH32H41x vendor SDK submodule
 # Register SDK for CI caching and hydration
 PLATFORM_SDKS += ch32_sdk
-PLATFORM_SDK_ch32_sdk_SUBMODULE :=
-PLATFORM_SDK_ch32_sdk_HYDRATE   :=
+PLATFORM_SDK_ch32_sdk_SUBMODULE := lib/modules/CH32H41x
+PLATFORM_SDK_ch32_sdk_HYDRATE   := ch32_sdk_submodule
 PLATFORM_SDK_ch32_sdk_TOOLS     := ch32_sdk_install
 PLATFORM_SDK_ch32_sdk_CC_INSTALL := ch32_sdk_install
+
+CH32_LIB_PATH ?= $(ROOT_DIR)/lib/modules/CH32H41x
+
+# Stamp file: use the CH32H41x submodule root as proof it's populated
+CH32_SDK_STAMP := $(CH32_LIB_PATH)/.git
+
+## ch32_sdk_submodule  : Hydrate CH32H41x submodule
+.PHONY: ch32_sdk_submodule
+ch32_sdk_submodule: $(CH32_SDK_STAMP)
+
+# Auto-hydrate CH32H41x when needed as a build dependency
+$(CH32_SDK_STAMP):
+	@echo "Hydrating CH32H41x submodule"
+	$(V1) git submodule update --init --checkout -- lib/modules/CH32H41x || { echo "Failed to update CH32H41x"; exit 1; }
+	@echo "CH32H41x ready"
 
 # Toolchain version and URL
 CH32_SDK_VERSION := 12.2.0

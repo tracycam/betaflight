@@ -2,16 +2,17 @@
 # CH32H4 Make file include
 #
 
-# Select CH32 WCH RISC-V toolchain
+# Select CH32 WCH RISC-V toolchain and auto-hydrate CH32H41x submodule
 PLATFORM_SDK := ch32_sdk
+PLATFORM_SDK_STAMP := $(CH32_SDK_STAMP)
 
 # Override ARM toolchain with WCH RISC-V toolchain
 # CH32_SDK_PREFIX is resolved in tools.mk
 ARM_SDK_PREFIX := $(CH32_SDK_PREFIX)
 
-CMSIS_DIR       := $(LIB_MAIN_DIR)/CH32H41x/Cmsis
-STDPERIPH_DIR   = $(LIB_MAIN_DIR)/CH32H41x/Peripheral
-MIDDLEWARES_DIR = $(LIB_MAIN_DIR)/CH32H41x/middlewares
+CMSIS_DIR       := $(LIB_MODULES_DIR)/CH32H41x/Cmsis
+STDPERIPH_DIR   = $(LIB_MODULES_DIR)/CH32H41x/Peripheral
+MIDDLEWARES_DIR = $(LIB_MODULES_DIR)/CH32H41x/middlewares
 STDPERIPH_SRC   = \
         ch32h417_adc.c \
         ch32h417_can.c \
@@ -53,7 +54,7 @@ STDPERIPH_SRC   = \
 
 STARTUP_SRC     = CH32/startup/startup_ch32h417_v5f.S
 
-VPATH           := $(VPATH):$(LIB_MAIN_DIR)/CH32H41x/Cmsis/Core:$(LIB_MAIN_DIR)/CH32H41x/Cmsis/Debug:$(STDPERIPH_DIR)/src:$(MIDDLEWARES_DIR)
+VPATH           := $(VPATH):$(LIB_MODULES_DIR)/CH32H41x/Cmsis/Core:$(LIB_MODULES_DIR)/CH32H41x/Cmsis/Debug:$(STDPERIPH_DIR)/src:$(MIDDLEWARES_DIR)
 
 VCP_SRC =  \
            ch32h41x_hs/usb_ch32h41x_usbhs_reg.c \
