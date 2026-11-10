@@ -3886,3 +3886,36 @@ int main(void) {
     puts("cold-boot VCP disconnect state, FS/HS descriptors & ZLP, UID serial, baud trampoline, and lossless RX NAK backpressure verified");
 }
 ''', extra_flags=('-I' + str(root / 'lib/main/CH32H41x/middlewares/common'), '-I' + str(root / 'lib/main/CH32H41x/middlewares/class/cdc')))
+
+run('clock_cycles_and_target_io_masks', '''
+#define CH32H4
+static uint32_t SystemCoreClock = 350000000u;
+#define CYCLE_TICKS_PER_US (SystemCoreClock / 1000000)
+''' + fn('src/platform/common/stm32/system.c', 'int32_t clockCyclesToMicros(')
+    + fn('src/platform/common/stm32/system.c', 'int32_t clockCyclesTo10thMicros(')
+    + fn('src/platform/common/stm32/system.c', 'int32_t clockCyclesTo100thMicros(') + '''
+#include "target.h"
+static const uint16_t osdPortA = TARGET_IO_PORTA;
+static const uint16_t osdPortB = TARGET_IO_PORTB;
+static const uint16_t osdPortC = TARGET_IO_PORTC;
+static const char boardId[] = TARGET_BOARD_IDENTIFIER;
+#undef TARGET_IO_PORTA
+#undef TARGET_IO_PORTB
+#undef TARGET_IO_PORTC
+#undef TARGET_IO_PORTD
+#undef TARGET_IO_PORTE
+#undef TARGET_IO_PORTF
+#undef USE_THEIA_OSD
+#define CH32H415_NO_THEIA_OSD
+''' + (root / 'src/platform/CH32/target/CH32H415/target.h').read_text().replace('#pragma once', '') + '''
+int main(void) {
+    if (clockCyclesToMicros(-700) != -2 || clockCyclesToMicros(700) != 2) return 1;
+    if (clockCyclesTo10thMicros(-350) != -10 || clockCyclesTo100thMicros(-350) != -100) return 2;
+    if (clockCyclesTo100thMicros(INT32_MAX) <= 0 || clockCyclesTo100thMicros(INT32_MIN + 1) >= 0) return 3;
+    if (strlen(boardId) != 4 || strcmp(boardId, "H415") != 0) return 4;
+    if (osdPortA != 0xef1f || osdPortB != 0xff7c || osdPortC != 0xffef) return 5;
+    if (TARGET_IO_PORTA != 0xffff || TARGET_IO_PORTB != 0xffff || TARGET_IO_PORTC != 0xffff) return 6;
+    if ((TARGET_IO_PORTB & (1u << 7)) == 0) return 7;
+    puts("signed cycle conversions, 4-char H415 board ID, and conditional OSD IO masks verified");
+}
+''', extra_flags=('-I' + str(root / 'src/platform/CH32/target/CH32H415'),))
