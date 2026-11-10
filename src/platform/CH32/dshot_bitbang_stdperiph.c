@@ -40,6 +40,7 @@
 #include "drivers/dshot_command.h"
 #include "drivers/motor.h"
 #include "drivers/nvic.h"
+#include "platform/rcc.h"
 #include "drivers/time.h"
 #include "drivers/timer.h"
 #include "platform/timer.h"
@@ -51,17 +52,35 @@ void bbGpioSetup(bbMotor_t *bbMotor)
     bbPort_t *bbPort = bbMotor->bbPort;
     int pinIndex = bbMotor->pinIndex;
 
-    bbPort->gpioModeMask |= (0x03 << (pinIndex * 2));
-    bbPort->gpioModeInput |= (DIR_IN << (pinIndex * 2));
-    bbPort->gpioModeOutput |= (DIR_OUT << (pinIndex * 2));
+    bbPort->gpioModeMask |= (0x03u << (pinIndex * 2));
+    bbPort->gpioModeInput |= ((uint32_t)DIR_IN << (pinIndex * 2));
+    bbPort->gpioModeOutput |= ((uint32_t)DIR_OUT << (pinIndex * 2));
+
+    const uint32_t pull = IO_CONFIG_GET_PULL(bbMotor->iocfg);
+    const uint32_t input = pull == GPIO_PULL_NONE ? 0x4u : 0x8u;
+    const unsigned shift = (pinIndex & 7) * 4;
+    if (pinIndex < 8) {
+        bbPort->gpioCfgLrMask |= 0xfu << shift;
+        bbPort->gpioCfgLrOutput |= 0x3u << shift;
+        bbPort->gpioCfgLrInput |= input << shift;
+    } else {
+        bbPort->gpioCfgHrMask |= 0xfu << shift;
+        bbPort->gpioCfgHrOutput |= 0x3u << shift;
+        bbPort->gpioCfgHrInput |= input << shift;
+    }
+    if (pull == GPIO_PULL_UP) {
+        bbPort->gpioInputBSRR |= 1u << pinIndex;
+    } else if (pull == GPIO_PULL_DOWN) {
+        bbPort->gpioInputBSRR |= 1u << (pinIndex + 16);
+    }
 
 #ifdef USE_DSHOT_TELEMETRY
     if (useDshotTelemetry) {
-        bbPort->gpioIdleBSRR |= (1 << pinIndex);         // BS (lower half)
+        bbPort->gpioIdleBSRR |= (1u << pinIndex);        // BS (lower half)
     } else
 #endif
     {
-        bbPort->gpioIdleBSRR |= (1 << (pinIndex + 16));  // BR (higher half)
+        bbPort->gpioIdleBSRR |= (1u << (pinIndex + 16)); // BR (higher half)
     }
 
 #ifdef USE_DSHOT_TELEMETRY
@@ -93,8 +112,6 @@ void bbTimerChannelInit(bbPort_t *bbPort)
 
     timerOCInit((TIM_TypeDef *)timhw->tim, timhw->channel, &TIM_OCStruct);
 
-    // timerOCPreloadConfig(timhw->tim, timhw->channel, TIM_OCPreload_Enable);
-
 #ifdef DEBUG_MONITOR_PACER
     if (timhw->tag) {
         IO_t io = IOGetByTag(timhw->tag);
@@ -111,6 +128,7 @@ void bbTimerChannelInit(bbPort_t *bbPort)
 
 #ifdef USE_DMA_REGISTER_CACHE
 
+FAST_CODE
 static void bbLoadDMARegs(dmaResource_t *dmaResource, dmaRegCache_t *dmaRegCache)
 {
     ((DMA_ARCH_TYPE *)dmaResource)->CFGR = dmaRegCache->CFGR;
@@ -131,8 +149,19 @@ static void bbSaveDMARegs(dmaResource_t *dmaResource, dmaRegCache_t *dmaRegCache
 #endif
 
 
+FAST_CODE
 bool bbSwitchToOutput(bbPort_t *bbPort)
 {
+    dmaResource_t *dmaResource = bbPort->dmaResource;
+    bbDMA_Cmd(bbPort, DISABLE);
+    if (!bbDMAWaitStopped(dmaResource)) {
+        return false;
+    }
+    dmaChannelDescriptor_t *descriptor = dmaGetDescriptorByIdentifier(dmaGetIdentifier(dmaResource));
+    if (descriptor) {
+        DMA_CLEAR_FLAG(descriptor, DMA_IT_GLOB | BB_DMA_FLAGS);
+        NVIC_ClearPendingIRQ(descriptor->irqN);
+    }
     dbgPinHi(1);
     // Output idle level before switching to output
     // Use BSRR register for this
@@ -144,67 +173,20 @@ bool bbSwitchToOutput(bbPort_t *bbPort)
     // Set GPIO to output
     ATOMIC_BLOCK(NVIC_PRIO_TIMER)
     {
-#if 1
-        // if(bbPort->portIndex >= 8)
-        // {
-        //     bbPort->gpio->CFGHR &= ~(0xF<< ((bbPort->portIndex - 8)*4));
-        //     bbPort->gpio->CFGHR |= 0x3<<((bbPort->portIndex - 8)*4);      //outpp
-        // }
-        // else
-        // {
-        //     bbPort->gpio->CFGLR &= ~(0xF<< ((bbPort->portIndex)*4));
-        //     bbPort->gpio->CFGLR |= 0x3<<((bbPort->portIndex)*4);       //outpp
-        // }
-
-        uint32_t expandedMaskLow = 0, outputlow = 0;
-        uint32_t expandedMaskHigh = 0, outputhigh = 0;
-
-        for (int i = 0; i < 16; i++) {
-            uint8_t mask2bit = (bbPort->gpioModeMask >> (i * 2)) & 0x3;
-
-            if (mask2bit != 0) {
-                uint32_t mapped4bit = 0xF;
-                if (i < 8) {
-                    expandedMaskLow |= (mapped4bit << (i * 4));
-                }else {
-                    expandedMaskHigh |= (mapped4bit << ((i - 8) * 4));
-                }
-            }
-
-            uint8_t out2bit = (bbPort->gpioModeOutput >> (i * 2)) & 0x3;
-            uint32_t mappedout4bit = 0;
-            if (out2bit != 0) {
-                mappedout4bit = 0x3;
-            }
-            // else
-            // {
-            //     mappedout4bit = 0x8;
-            // }
-
-            if (i < 8) {
-                outputlow |= (mappedout4bit << (i * 4));
-            }else {
-                outputhigh |= (mappedout4bit << ((i - 8) * 4));
-            }
+        if (bbPort->gpioCfgLrMask) {
+            MODIFY_REG(bbPort->gpio->CFGLR, bbPort->gpioCfgLrMask, bbPort->gpioCfgLrOutput);
         }
-        MODIFY_REG(bbPort->gpio->CFGLR, expandedMaskLow, outputlow);
-        MODIFY_REG(bbPort->gpio->CFGHR, expandedMaskHigh, outputhigh);
-#else
-        // MODIFY_REG(bbPort->gpio->cfgr, bbPort->gpioModeMask, bbPort->gpioModeOutput);
-        GPIOE->CFGLR &= ~(0x0FFFF000);
-        GPIOE->CFGLR |= (0x03333000);   //
-#endif
+        if (bbPort->gpioCfgHrMask) {
+            MODIFY_REG(bbPort->gpio->CFGHR, bbPort->gpioCfgHrMask, bbPort->gpioCfgHrOutput);
+        }
     }
 
     // Reinitialize port group DMA for output
 
-    dmaResource_t *dmaResource = bbPort->dmaResource;
 #ifdef USE_DMA_REGISTER_CACHE
     bbLoadDMARegs(dmaResource, &bbPort->dmaRegOutput);
 #else
-    // xDMA_DeInit(dmaResource);
     xDMA_Init(dmaResource, &bbPort->outputDmaInit);
-    // Needs this, as it is DeInit'ed above...
     xDMA_ITConfig(dmaResource, DMA_IT_TC | DMA_IT_TE, ENABLE);
 #endif
 
@@ -219,65 +201,21 @@ bool bbSwitchToOutput(bbPort_t *bbPort)
 }
 
 #ifdef USE_DSHOT_TELEMETRY
+FAST_CODE
 void bbSwitchToInput(bbPort_t *bbPort)
 {
     dbgPinHi(1);
 
-    // Set GPIO to input
-    WRITE_REG(bbPort->gpio->BSHR, bbPort->gpioIdleBSRR);
+    // Set the pull direction before enabling the input configuration.
+    WRITE_REG(bbPort->gpio->BSHR, bbPort->gpioInputBSRR);
     ATOMIC_BLOCK(NVIC_PRIO_TIMER)
     {
-#if 1
-        // if(bbPort->portIndex >= 8)
-        // {
-        //     bbPort->gpio->CFGHR &= ~(0xF<< ((bbPort->portIndex - 8)*4));
-        //     bbPort->gpio->CFGHR |= 0x4<<((bbPort->portIndex - 8)*4);      //float in
-        // }
-        // else
-        // {
-        //     bbPort->gpio->CFGLR &= ~(0xF<< ((bbPort->portIndex)*4));
-        //     bbPort->gpio->CFGLR |= 0x4<<((bbPort->portIndex)*4);       //float in
-        // }
-        // MODIFY_REG(bbPort->gpio->MODER, bbPort->gpioModeMask, bbPort->gpioModeInput);
-
-
-        uint32_t expandedMaskLow = 0, outputlow = 0;
-        uint32_t expandedMaskHigh = 0, outputhigh = 0;
-
-        for (int i = 0; i < 16; i++) {
-            uint8_t mask2bit = (bbPort->gpioModeMask >> (i * 2)) & 0x3;
-
-            if (mask2bit != 0) {
-                uint32_t mapped4bit = 0xF;
-                if (i < 8) {
-                    expandedMaskLow |= (mapped4bit << (i * 4));
-                }else {
-                    expandedMaskHigh |= (mapped4bit << ((i - 8) * 4));
-                }
-            }
-
-            uint8_t out2bit = (bbPort->gpioModeOutput >> (i * 2)) & 0x3;
-            uint32_t mappedout4bit = 0;
-            if (out2bit != 0) {
-                mappedout4bit = 0x8; //
-            }
-            // else
-            // {
-            //     mappedout4bit = 0x;
-            // }
-
-            if (i < 8) {
-                outputlow |= (mappedout4bit << (i * 4));
-            }else {
-                outputhigh |= (mappedout4bit << ((i - 8) * 4));
-            }
+        if (bbPort->gpioCfgLrMask) {
+            MODIFY_REG(bbPort->gpio->CFGLR, bbPort->gpioCfgLrMask, bbPort->gpioCfgLrInput);
         }
-        MODIFY_REG(bbPort->gpio->CFGLR, expandedMaskLow, outputlow);
-        MODIFY_REG(bbPort->gpio->CFGHR, expandedMaskHigh, outputhigh);
-#else
-        GPIOE->CFGLR &= ~(0x0FFFF000);
-        GPIOE->CFGLR |= (0x08888000);   //
-#endif
+        if (bbPort->gpioCfgHrMask) {
+            MODIFY_REG(bbPort->gpio->CFGHR, bbPort->gpioCfgHrMask, bbPort->gpioCfgHrInput);
+        }
     }
 
     // Reinitialize port group DMA for input
@@ -286,16 +224,9 @@ void bbSwitchToInput(bbPort_t *bbPort)
 #ifdef USE_DMA_REGISTER_CACHE
     bbLoadDMARegs(dmaResource, &bbPort->dmaRegInput);
 #else
-    // xDMA_DeInit(dmaResource);
     xDMA_Init(dmaResource, &bbPort->inputDmaInit);
-    // Needs this, as it is DeInit'ed above...
     xDMA_ITConfig(dmaResource, DMA_IT_TC | DMA_IT_TE, ENABLE);
 #endif
-
-    // Reinitialize pacer timer for input
-
-    ((TIM_TypeDef *)bbPort->timhw->tim)->CNT = 0;
-    ((TIM_TypeDef *)bbPort->timhw->tim)->ATRLR = bbPort->inputARR;
 
     bbDMA_Cmd(bbPort, ENABLE);
 
@@ -312,20 +243,9 @@ void bbDMAPreconfigure(bbPort_t *bbPort, uint8_t direction)
 
     DMA_StructInit(dmainit);
 
-    // dmainit->DMA_Mode = DMA_Mode_Normal;
-    // dmainit->DMA_Channel = bbPort->dmaChannel;
-    // dmainit->DMA_PeripheralInc = DMA_PeripheralInc_Disable;
-    // dmainit->DMA_MemoryInc = DMA_MemoryInc_Enable;
-    // dmainit->DMA_FIFOMode = DMA_FIFOMode_Enable ;
-    // dmainit->DMA_FIFOThreshold = DMA_FIFOThreshold_1QuarterFull ;
-    // dmainit->DMA_MemoryBurst = DMA_MemoryBurst_Single ;
-    // dmainit->DMA_PeripheralBurst = DMA_PeripheralBurst_Single;
-
     dmainit->DMA_Mode = DMA_Mode_Normal;
     dmainit->DMA_PeripheralInc = DMA_PeripheralInc_Disable;
     dmainit->DMA_MemoryInc = DMA_MemoryInc_Enable;
-
-
 
     if (direction == DSHOT_BITBANG_DIRECTION_OUTPUT) {
         dmainit->DMA_Priority = DMA_Priority_VeryHigh;
@@ -363,14 +283,28 @@ void bbTIM_TimeBaseInit(bbPort_t *bbPort, uint16_t period)
 {
     TIM_TimeBaseInitTypeDef *init = &bbPort->timeBaseInit;
 
+    RCC_ClockCmd(timerRCC(bbPort->timhw->tim), ENABLE);
+
     init->TIM_Prescaler = 0; // Feed raw timerClock
     init->TIM_ClockDivision = TIM_CKD_DIV1;
     init->TIM_CounterMode = TIM_CounterMode_Up;
     init->TIM_Period = period;
+    init->TIM_RepetitionCounter = 0;
     TIM_TimeBaseInit((TIM_TypeDef *)bbPort->timhw->tim, init);
     TIM_ARRPreloadConfig((TIM_TypeDef *)bbPort->timhw->tim, ENABLE);
 }
 
+FAST_CODE
+void bbTIM_ReloadPeriod(void *TIMx, uint16_t period)
+{
+    TIM_TypeDef *tim = (TIM_TypeDef *)TIMx;
+
+    tim->ATRLR = period;
+    tim->SWEVGR = TIM_PSCReloadMode_Immediate;
+    tim->INTFR = (uint16_t)~TIM_FLAG_Update;
+}
+
+FAST_CODE
 void bbTIM_DMACmd(void *TIMx, uint16_t TIM_DMASource, FunctionalState NewState)
 {
     ch32DmaBarrier();
@@ -382,6 +316,7 @@ void bbDMA_ITConfig(bbPort_t *bbPort)
     xDMA_ITConfig(bbPort->dmaResource, DMA_IT_TC | DMA_IT_TE, ENABLE);
 }
 
+FAST_CODE
 void bbDMA_Cmd(bbPort_t *bbPort, FunctionalState NewState)
 {
     ch32DmaBarrier();
@@ -393,4 +328,4 @@ int bbDMA_Count(bbPort_t *bbPort)
 {
     return xDMA_GetCurrDataCounter(bbPort->dmaResource);
 }
-#endif // USE_DSHOT_BB
+#endif // USE_DSHOT_BITBANG

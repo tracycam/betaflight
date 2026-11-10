@@ -6,13 +6,6 @@
 #ifndef CHERRYUSB_CONFIG_H
 #define CHERRYUSB_CONFIG_H
 
-// memcpy define
-static inline void USB_MCPY(uint8_t* DA,uint8_t* SA,uint8_t* EA)
-{
-    __asm__ volatile("mcpy %2, %0, %1" :"+r"(SA) , "+r"(DA):"r"(EA):"memory");
-}
-
-
 /* ================ USB common Configuration ================ */
 
 #ifdef __RTTHREAD__
@@ -42,10 +35,18 @@ static inline void USB_MCPY(uint8_t* DA,uint8_t* SA,uint8_t* EA)
 /* attribute data into no cache ram */
 #define USB_NOCACHE_RAM_SECTION __attribute__((section(".noncacheable")))
 
-/* use usb_memcpy default for high performance but cost more flash memory.
- * And, arm libc has a bug that memcpy() may cause data misalignment when the size is not a multiple of 4.
-*/
-// #define CONFIG_USB_MEMCPY_DISABLE
+/* Use standard toolchain memcpy on RISC-V instead of software byte/word usb_memcpy */
+#define CONFIG_USB_MEMCPY_DISABLE
+
+#ifndef USBD_MSC_CRITICAL_BLOCK
+#if defined(USE_USB_MSC)
+#include "build/atomic.h"
+#include "drivers/nvic.h"
+#define USBD_MSC_CRITICAL_BLOCK ATOMIC_BLOCK(NVIC_PRIO_USB)
+#else
+#define USBD_MSC_CRITICAL_BLOCK for (int _msc_once = 1; _msc_once; _msc_once = 0)
+#endif
+#endif
 
 /* ================= USB Device Stack Configuration ================ */
 
@@ -103,7 +104,7 @@ static inline void USB_MCPY(uint8_t* DA,uint8_t* SA,uint8_t* EA)
 #endif
 
 /* move msc read & write from isr to while(1), you should call usbd_msc_polling in while(1) */
-// #define CONFIG_USBDEV_MSC_POLLING
+#define CONFIG_USBDEV_MSC_POLLING
 
 /* move msc read & write from isr to thread */
 // #define CONFIG_USBDEV_MSC_THREAD

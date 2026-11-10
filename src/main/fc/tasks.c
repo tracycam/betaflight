@@ -93,9 +93,8 @@
 
 #include "scheduler/scheduler.h"
 
-#if defined(CH32H415) && defined(CH32H415_BOOT_SDI)
-#include "target/CH32H415/boot_sdi.h"
-#define SYSTEM_LOAD_TASK ch32h415BootSdiSystemTask
+#if defined(USE_PLATFORM_SYSTEM_LOAD_TASK)
+#include "platform/system_load_task.h"
 #else
 #define SYSTEM_LOAD_TASK taskSystemLoad
 #endif
@@ -350,10 +349,9 @@ static void taskTelemetry(timeUs_t currentTimeUs)
 #ifdef USE_CAMERA_CONTROL
 static void taskCameraControl(timeUs_t currentTimeUs)
 {
-    if (ARMING_FLAG(ARMED)) {
-        return;
-    }
-
+    // Always allow an already-active key press to finish and return to idle even
+    // if the craft arms before endTimeMillis elapses; new stick-gesture presses
+    // are gated on !ARMING_FLAG(ARMED) in rc_controls.c and msp.c.
     cameraControlProcess(currentTimeUs);
 }
 #endif

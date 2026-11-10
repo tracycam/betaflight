@@ -108,7 +108,7 @@ static uint32_t decode_bb_value(uint32_t value, uint16_t buffer[], uint32_t coun
     return value;
 }
 
-#if defined(USE_DSHOT_BITBAND) && !defined(CH32H4)
+#if defined(USE_DSHOT_BITBAND)
 uint32_t decode_bb_bitband( uint16_t buffer[], uint32_t count, uint32_t bit)
 {
     timeUs_t now = micros();

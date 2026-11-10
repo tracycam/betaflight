@@ -571,6 +571,9 @@ const struct serialPortVTable uartVTable[] = {
         .serialSetBaudRate = uartSetBaudRate,
         .isSerialTransmitBufferEmpty = isUartTransmitBufferEmpty,
         .setMode = uartSetMode,
+#ifdef USE_PLATFORM_UART_IDLE_CALLBACK
+        .setIdleCallback = uartSetIdleCallback,
+#endif
         .setCtrlLineStateCb = NULL,
         .setBaudRateCb = NULL,
         .writeBuf = uartWriteBuf,
@@ -579,16 +582,7 @@ const struct serialPortVTable uartVTable[] = {
     }
 };
 
-#if defined(USE_CHBSP_DRIVER)
-#define UART_IRQHandler(type, number, dev)                      \
-    __FAST_INTERRUPT FAST_IRQ_HANDLER                           \
-    void USART ## number ## _IRQHandler(void)                   \
-    {                                                           \
-        uartPort_t *uartPort = &(uartDevice[(dev)].port);       \
-        uartIrqHandler(uartPort);                               \
-    }                                                           \
-/**/
-#else
+#ifndef USE_PLATFORM_UART_IRQ_HANDLERS
 #define UART_IRQHandler(type, number, dev)                      \
     FAST_IRQ_HANDLER void type ## number ## _IRQHandler(void)   \
     {                                                           \
@@ -596,7 +590,6 @@ const struct serialPortVTable uartVTable[] = {
         uartIrqHandler(uartPort);                               \
     }                                                           \
 /**/
-#endif
 
 #ifdef USE_UART1
 UART_IRQHandler(USART, 1, UARTDEV_1) // USART1 Rx/Tx IRQ Handler
@@ -661,5 +654,6 @@ UART_IRQHandler(UART, 15, UARTDEV_15) // UART15 Rx/Tx IRQ Handler
 #ifdef USE_LPUART1
 UART_IRQHandler(LPUART, 1, UARTDEV_LP1) // LPUART1 Rx/Tx IRQ Handler
 #endif
+#endif // !USE_PLATFORM_UART_IRQ_HANDLERS
 
 #endif // USE_UART

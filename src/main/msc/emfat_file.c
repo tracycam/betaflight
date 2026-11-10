@@ -40,8 +40,6 @@
 
 #include "pg/flash.h"
 
-#include "msc/usbd_storage.h"
-
 #define FILESYSTEM_SIZE_MB 256
 #define HDR_BUF_SIZE 32
 

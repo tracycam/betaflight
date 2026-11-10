@@ -35,6 +35,7 @@
 #include "drivers/serial.h"
 #include "drivers/serial_uart.h"
 #include "drivers/serial_uart_impl.h"
+#include "drivers/timer.h"
 #include "pg/timerio.h"
 
 
@@ -141,15 +142,42 @@ static const dmaPeripheralMapping_t dmaPeripheralMapping[] = {
 #endif
 
 #ifdef USE_TIMER
+#if (USED_TIMERS & TIM_N(1))
     REQMAP_TIMUP(TIMUP, 1),
+#endif
+#if (USED_TIMERS & TIM_N(2))
     REQMAP_TIMUP(TIMUP, 2),
+#endif
+#if (USED_TIMERS & TIM_N(3))
     REQMAP_TIMUP(TIMUP, 3),
+#endif
+#if (USED_TIMERS & TIM_N(4))
     REQMAP_TIMUP(TIMUP, 4),
+#endif
+#if (USED_TIMERS & TIM_N(5))
     REQMAP_TIMUP(TIMUP, 5),
+#endif
+#if (USED_TIMERS & TIM_N(6))
     REQMAP_TIMUP(TIMUP, 6),
+#endif
+#if (USED_TIMERS & TIM_N(7))
     REQMAP_TIMUP(TIMUP, 7),
+#endif
+#if (USED_TIMERS & TIM_N(8))
     REQMAP_TIMUP(TIMUP, 8),
-    // REQMAP_TIMUP(TIMUP, 20),
+#endif
+#if (USED_TIMERS & TIM_N(9))
+    REQMAP_TIMUP(TIMUP, 9),
+#endif
+#if (USED_TIMERS & TIM_N(10))
+    REQMAP_TIMUP(TIMUP, 10),
+#endif
+#if (USED_TIMERS & TIM_N(11))
+    REQMAP_TIMUP(TIMUP, 11),
+#endif
+#if (USED_TIMERS & TIM_N(12))
+    REQMAP_TIMUP(TIMUP, 12),
+#endif
 #endif
 };
 
@@ -187,11 +215,22 @@ static const dmaTimerMapping_t dmaTimerMapping[] = {
     REQMAP_TIM(TIM8, CH2),
     REQMAP_TIM(TIM8, CH3),
     REQMAP_TIM(TIM8, CH4),
-    // REQMAP_TIM(TIM20, CH1),
-    // REQMAP_TIM(TIM20, CH2),
-    // REQMAP_TIM(TIM20, CH3),
-    // REQMAP_TIM(TIM20, CH4),
-    // XXX Check non-CH1 for TIM15,16,17 and 20
+    REQMAP_TIM(TIM9, CH1),
+    REQMAP_TIM(TIM9, CH2),
+    REQMAP_TIM(TIM9, CH3),
+    REQMAP_TIM(TIM9, CH4),
+    REQMAP_TIM(TIM10, CH1),
+    REQMAP_TIM(TIM10, CH2),
+    REQMAP_TIM(TIM10, CH3),
+    REQMAP_TIM(TIM10, CH4),
+    REQMAP_TIM(TIM11, CH1),
+    REQMAP_TIM(TIM11, CH2),
+    REQMAP_TIM(TIM11, CH3),
+    REQMAP_TIM(TIM11, CH4),
+    REQMAP_TIM(TIM12, CH1),
+    REQMAP_TIM(TIM12, CH2),
+    REQMAP_TIM(TIM12, CH3),
+    REQMAP_TIM(TIM12, CH4),
 };
 
 #undef TC
@@ -234,7 +273,7 @@ const dmaChannelSpec_t *dmaGetChannelSpecByPeripheral(dmaPeripheral_e device, ui
     }
 
 #if defined(USE_THEIA_OSD)
-    if (opt == 13 || (device == DMA_PERIPH_TIMUP && (index == 1 || index >= 9))) {
+    if (opt == 13) {
         return NULL;
     }
 #endif

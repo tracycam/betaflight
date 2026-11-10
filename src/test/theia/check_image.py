@@ -5,11 +5,15 @@ import json
 import pathlib
 import struct
 import sys
+
+sys.dont_write_bytecode = True
+from check_entry import check_v5f_entry
 elf_path, bin_path = map(pathlib.Path, sys.argv[1:3])
 elf, binary = elf_path.read_bytes(), bin_path.read_bytes()
 assert elf[:6] == b'\x7fELF\x01\x01'
 header = struct.unpack_from('<16sHHIIIIIHHHHHH', elf)
 assert header[2] == 243 and header[4] == 0x08016000
+check_v5f_entry(binary)
 phoff, phsize, phnum = header[5], header[9], header[10]
 segments = []
 for i in range(phnum):

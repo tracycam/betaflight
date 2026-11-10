@@ -32,6 +32,22 @@
 #include "drivers/timer.h"
 #include "platform/timer.h"
 
+#ifdef USE_PLATFORM_TIMER_FILTER
+bool timerPlatformIsAvailable(const timerHardware_t *timerHardware)
+{
+#ifdef USE_THEIA_OSD
+    const timerResource_t *tim = timerHardware->tim;
+    if (tim == (const timerResource_t *)TIM2 ||
+        tim == (const timerResource_t *)TIM10 ||
+        tim == (const timerResource_t *)TIM11 ||
+        tim == (const timerResource_t *)TIM12) {
+        return false;
+    }
+#endif
+    return IOGetByTag(timerHardware->tag) != NULL;
+}
+#endif
+
 const timerDef_t timerDefinitions[HARDWARE_TIMER_DEFINITION_COUNT] = {
     { .TIMx = TIM1, .rcc = RCC_HB2(TIM1), .inputIrq = TIM1_CC_IRQn },
 #ifndef USE_THEIA_OSD

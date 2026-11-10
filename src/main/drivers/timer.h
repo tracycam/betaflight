@@ -88,6 +88,10 @@ typedef struct timerHardware_s {
 #endif
 } timerHardware_t;
 
+#ifdef USE_PLATFORM_TIMER_FILTER
+bool timerPlatformIsAvailable(const timerHardware_t *timerHardware);
+#endif
+
 typedef enum {
     TIMER_OUTPUT_NONE      = 0,
     TIMER_OUTPUT_INVERTED  = (1 << 0),

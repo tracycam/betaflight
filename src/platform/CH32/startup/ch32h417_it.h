@@ -14,5 +14,3 @@
 
 #include "ch32_debug.h"
 #endif
-
-

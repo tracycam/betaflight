@@ -878,6 +878,7 @@ targets-ci-grouped-print:
 			family=$$(grep -m1 'TARGET_MCU_FAMILY[[:space:]]*:=' "$$f" | sed 's/.*:=[[:space:]]*//'); \
 			[ -n "$$family" ] && echo "TARGET $$target $$family"; \
 		done; \
+		$(foreach alias,$(filter CONFIG_MCU_ALIAS_%,$(.VARIABLES)),echo "ALIAS $(patsubst CONFIG_MCU_ALIAS_%,%,$(alias)) $($(alias))";) \
 		for t in $(CI_TARGETS); do \
 			config_h="$(CONFIG_DIR)/configs/$$t/config.h"; \
 			if [ ! -f "$$config_h" ]; then \
@@ -897,11 +898,12 @@ targets-ci-grouped-print:
 	) | awk ' \
 		/^FAMILY/ { family_sdk[$$2] = $$3 } \
 		/^TARGET/ { target_family[$$2] = $$3 } \
+		/^ALIAS/ { mcu_alias[$$2] = $$3 } \
 		/^CONFIG/ { config_target[$$2] = $$3 } \
 		/^CI/ { \
 			t = $$2; \
 			family = target_family[t]; \
-			if (family == "") { mcu = config_target[t]; family = target_family[mcu] } \
+			if (family == "") { mcu = config_target[t]; if (mcu in mcu_alias) mcu = mcu_alias[mcu]; family = target_family[mcu] } \
 			sdk = family_sdk[family]; \
 			if (sdk == "") { \
 				printf("Unable to resolve PLATFORM_SDK for CI target %s (family=%s)\n", t, family) > "/dev/stderr"; \
@@ -952,10 +954,12 @@ test_versions:
 
 .PHONY: test-ch32h415
 test-ch32h415:
+	$(V0) python3 src/test/theia/check_entry_test.py
 	$(V0) python3 src/test/ch32h415/regression.py
 	$(V0) python3 src/test/theia/split_image_test.py
-	$(V0) cc -std=gnu11 -O2 -Wall -Wextra -Werror -DTHEIA_PRODUCER_TEST -Isrc/test/unit -Isrc/main src/main/io/displayport_theia_ring.c src/test/theia/ring_test.c -o /tmp/bf_theia_ring_test
-	$(V0) /tmp/bf_theia_ring_test
+	$(V0) mkdir -p $(OBJECT_DIR)/test
+	$(V0) cc -std=gnu11 -O2 -Wall -Wextra -Werror -DTHEIA_PRODUCER_TEST -Isrc/test/unit -Isrc/main -Isrc/platform/CH32/include src/main/io/displayport_theia_ring.c src/test/theia/ring_test.c -o $(OBJECT_DIR)/test/bf_theia_ring_test
+	$(V0) $(OBJECT_DIR)/test/bf_theia_ring_test
 
 ## test_%            : run test 'test_%' from the test suite
 test_%:

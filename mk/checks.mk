@@ -4,8 +4,8 @@ checks: check-target-independence \
 	check-stale-submodule-paths
 
 check-target-independence:
-	$(V1) for test_target in $(VALID_TARGETS); do \
-		FOUND=$$(grep -rE "\W$${test_target}(\W.*)?$$" src/main | grep -vE "(//)|(/\*).*\W$${test_target}(\W.*)?$$" | grep -vE "^src/main/target"); \
+	$(V1) for test_target in $(BASE_TARGETS); do \
+		FOUND=$$(grep -rE "^[[:space:]]*#[[:space:]]*(if|ifdef|ifndef|elif|include)([[:space:]]|\\()" src/main | grep -E "(^|[^[:alnum:]_])$${test_target}([^[:alnum:]_]|$$)" | grep -vE "^src/main/target"); \
 		if [ "$${FOUND}" != "" ]; then \
 			echo "Target dependencies for target '$${test_target}' found:"; \
 			echo "$${FOUND}"; \

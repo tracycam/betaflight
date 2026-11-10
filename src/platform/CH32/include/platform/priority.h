@@ -32,7 +32,7 @@
  * PFIC's threshold comparison includes equality. Zero remains "unmasked".
  */
 #define NVIC_PRIORITY_GROUPING 0x500
-#define NVIC_BUILD_PRIORITY(base, sub) ((((base) & 0x03U) << 6) | 0x20U)
+#define NVIC_BUILD_PRIORITY(base, sub) ((((base) > 3U ? 3U : (base)) << 6) | 0x20U)
 #define NVIC_PRIORITY_BASE(priority) (((priority) & 0xC0U) >> 6)
 #define NVIC_PRIORITY_SUB(priority) 0U
 

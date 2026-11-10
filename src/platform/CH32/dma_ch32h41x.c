@@ -29,6 +29,7 @@
 
 #ifdef USE_DMA
 
+#include "build/atomic.h"
 #include "drivers/nvic.h"
 #include "drivers/dma_impl.h"
 #include "platform/dma.h"
@@ -57,6 +58,18 @@ dmaChannelDescriptor_t dmaDescriptors[DMA_LAST_HANDLER] = {
     DEFINE_DMA_CHANNEL(DMA2, 8, 28),
 };
 
+#ifdef USE_PLATFORM_DMA_FILTER
+bool dmaIsReserved(dmaIdentifier_e identifier)
+{
+#ifdef USE_THEIA_OSD
+    return identifier == DMA2_CH6_HANDLER;
+#else
+    UNUSED(identifier);
+    return false;
+#endif
+}
+#endif
+
 /*
  * DMA IRQ Handlers
  * if use hardware push&pop,key woard "WCH-Interrupt-fast" is needed
@@ -79,14 +92,19 @@ __FAST_INTERRUPT DEFINE_DMA_IRQ_HANDLER(2, 7, DMA2_CH7_HANDLER)
 __FAST_INTERRUPT DEFINE_DMA_IRQ_HANDLER(2, 8, DMA2_CH8_HANDLER)
 
 
+#define CH32_DMAMUX_MAX_REQUEST_ID DMAMUX_DMAREQ_ID_TIM7_UP
+
 static void enableDmaClock(int index)
 {
-    RCC_ClockCmd(dmaDescriptors[index].dma == DMA1 ?  RCC_HB(DMA1) : RCC_HB(DMA2), ENABLE);
+    RCC_ClockCmd(dmaDescriptors[index].dma == DMA1 ? RCC_HB(DMA1) : RCC_HB(DMA2), ENABLE);
 }
 
 void dmaEnable(dmaIdentifier_e identifier)
 {
     const int index = DMA_IDENTIFIER_TO_INDEX(identifier);
+    if (index < 0 || index >= DMA_LAST_HANDLER) {
+        return;
+    }
 
     enableDmaClock(index);
 }
@@ -94,14 +112,39 @@ void dmaEnable(dmaIdentifier_e identifier)
 void dmaMuxEnable(dmaIdentifier_e identifier, uint32_t dmaMuxId)
 {
     const int index = DMA_IDENTIFIER_TO_INDEX(identifier);
-    // dmamux_init(dmaDescriptors[index].dmamux, dmaMuxId);
-    DMA_MuxChannelConfig(index, dmaMuxId);
+    if (index < 0 || index >= DMA_LAST_HANDLER || dmaMuxId == 0 || dmaMuxId > CH32_DMAMUX_MAX_REQUEST_ID) {
+        return;
+    }
+#ifdef USE_PLATFORM_DMA_FILTER
+    if (dmaIsReserved(identifier)) {
+        return;
+    }
+#endif
+
+    RCC_ClockCmd(RCC_HB(DMA1), ENABLE);
+    enableDmaClock(index);
+
+    volatile uint32_t *cfgr = &(&DMAMUX->CFGR0_3)[index / 4];
+    const unsigned shift = (unsigned)(index % 4) * 8U;
+    const uint32_t mask = 0x7FU << shift;
+    const uint32_t value = ((dmaMuxId - 1U) & 0x7FU) << shift;
+    ATOMIC_BLOCK_ALL() {
+        *cfgr = (*cfgr & ~mask) | value;
+    }
 }
 
 void dmaSetHandler(dmaIdentifier_e identifier, dmaCallbackHandlerFuncPtr callback, uint32_t priority,
                    uint32_t userParam)
 {
     const int index = DMA_IDENTIFIER_TO_INDEX(identifier);
+    if (index < 0 || index >= DMA_LAST_HANDLER) {
+        return;
+    }
+#ifdef USE_PLATFORM_DMA_FILTER
+    if (dmaIsReserved(identifier)) {
+        return;
+    }
+#endif
 
     enableDmaClock(index);
     dmaDescriptors[index].irqHandlerCallback = callback;

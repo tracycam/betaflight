@@ -7,7 +7,7 @@
  * Foundation, either version 3 of the License, or (at your option)
  * any later version.
  *
- * Betaflight is distributed in the hope that they
+ * Betaflight is distributed in the hope that it
  * will be useful, but WITHOUT ANY WARRANTY; without even the implied
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  * See the GNU General Public License for more details.
@@ -24,6 +24,7 @@
 
 #if defined(CH32H415)
 
+#include <stdbool.h>
 
 #include "ch32h417.h"
 #include "ch32_debug.h"
@@ -31,6 +32,7 @@
 
 // The paired H415 bootloader currently accepts only the hardware BOOT0 input.
 #define PLATFORM_SUPPORTS_SOFTWARE_BOOTLOADER 0
+#define USE_PLATFORM_THEIA_OSD
 
 // Chip Unique ID on H41X
 #define U_ID_0 (*(uint32_t *)0x1ffff7e8)
@@ -38,7 +40,6 @@
 #define U_ID_2 (*(uint32_t *)0x1ffff7f0)
 
 #define FLASH_CONFIG_STREAMER_BUFFER_SIZE   256     // fast program is 256bytes
-#define FLASH_CONFIG_BUFFER_TYPE            uint32_t
 
 #define __FAST_INTERRUPT       __attribute__((interrupt("WCH-Interrupt-fast")))
 
@@ -52,7 +53,13 @@ __attribute__((always_inline)) static inline uint32_t __get_BASEPRI(void)
 
 __attribute__((always_inline)) static inline void __set_BASEPRI_nb(uint32_t basePri)
 {
-    PFIC_ITHRESDR = basePri & 0xF0;
+    const uint32_t masked = basePri & 0xF0;
+    PFIC_ITHRESDR = masked;
+#ifdef __riscv
+    if (masked != 0) {
+        asm volatile ("fence.i" ::: "memory");
+    }
+#endif
 }
 
 __attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb(uint32_t basePri)
@@ -61,12 +68,30 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX_nb(uint32_t 
     const uint32_t current = __get_BASEPRI();
     if (priority != 0 && (current == 0 || priority < current)) {
         PFIC_ITHRESDR = priority;
+#ifdef __riscv
+        asm volatile ("fence.i" ::: "memory");
+#endif
     }
 }
 
 __attribute__((always_inline)) static inline void ch32DmaBarrier(void)
 {
     asm volatile ("fence iorw, iorw" ::: "memory");
+}
+
+__attribute__((always_inline)) static inline void ch32InvalidateFlashCache(void)
+{
+#if defined(__riscv) && defined(Core_V5F) && !defined(UNIT_TEST)
+    // QingKe V5F caches reads from the internal flash window (0x08000000+) via
+    // CSR 0xBC2. Invalidate cached lines via CSR 0xBD0 bit 2 after flash erase
+    // or fast-page programming so readback verification observes physical flash.
+    asm volatile (
+        "fence iorw, iorw\n\t"
+        "csrwi 0xbd0, 0x4\n\t"
+        "fence.i"
+        : : : "memory"
+    );
+#endif
 }
 
 __attribute__((always_inline)) static inline void __set_BASEPRI(uint32_t basePri)
@@ -87,10 +112,17 @@ __attribute__((always_inline)) static inline void __set_BASEPRI_MAX(uint32_t bas
 
 // QingKe global interrupt enable is in CSR 0x800. Save and clear both
 // enable bits atomically, then restore only those that were originally set.
+__attribute__((always_inline)) static inline bool ch32GlobalInterruptsEnabled(void)
+{
+    uint32_t state;
+    asm volatile ("csrr %0, 0x800" : "=r" (state) : : "memory");
+    return (state & 0x08u) != 0;
+}
+
 __attribute__((always_inline)) static inline uint32_t ch32IrqSave(void)
 {
     uint32_t state;
-    asm volatile ("csrrc %0, 0x800, %1" : "=r" (state) : "r" (0x88u) : "memory");
+    asm volatile ("csrrc %0, 0x800, %1\n\tfence.i" : "=r" (state) : "r" (0x88u) : "memory");
     return state & 0x88u;
 }
 
@@ -107,42 +139,65 @@ __attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state
 #define CH32H4
 #endif
 
-#define SPI_TRAIT_AF_PIN 1
-#define I2C_TRAIT_AF_PIN 1
 #define I2C_TRAIT_STATE 1
 
 #define SET_BIT(REG, BIT)     ((REG) |= (BIT))
 #define CLEAR_BIT(REG, BIT)   ((REG) &= ~(BIT))
-#define READ_BIT(REG, BIT)    ((REG)&(BIT))
+#define READ_BIT(REG, BIT)    ((REG) & (BIT))
 #define CLEAR_REG(REG)        ((REG) = (0x0))
 #define WRITE_REG(REG, VAL)   ((REG) = (VAL))
 #define READ_REG(REG)         ((REG))
 #define MODIFY_REG(REG, CLEARMASK, SETMASK)  WRITE_REG((REG), (((READ_REG(REG)) & (~(CLEARMASK))) | (SETMASK)))
 #endif
 
-
 #ifdef CH32H4
 
+#ifndef USE_ITCM_RAM
 #define USE_ITCM_RAM
+#endif
 #define ITCM_RAM_OPTIMISATION "-O2", "-freorder-blocks-algorithm=simple"
+#ifndef USE_FAST_DATA
 #define USE_FAST_DATA
+#endif
+#ifndef USE_RPM_FILTER
 #define USE_RPM_FILTER
+#endif
+#ifndef USE_DYN_IDLE
 #define USE_DYN_IDLE
+#endif
+#ifndef USE_DYN_NOTCH_FILTER
 #define USE_DYN_NOTCH_FILTER
-// #define USE_OVERCLOCK
+#endif
+#ifndef USE_ADC_INTERNAL
 #define USE_ADC_INTERNAL
-#define ADC_VOLTAGE_REFERENCE_MV  3300  //maybe better  cali internal
-#define USE_USB_MSC
+#endif
+#ifndef USE_PLATFORM_UART_IDLE_CALLBACK
+#define USE_PLATFORM_UART_IDLE_CALLBACK
+#endif
+#define ADC_VOLTAGE_REFERENCE_MV            3300
+#define PLATFORM_VCP_TX_STALL_TIMEOUT_MS    500
+#ifndef USE_PERSISTENT_MSC_RTC
 #define USE_PERSISTENT_MSC_RTC
-// #define USE_MCO
+#endif
+#ifndef USE_DMA_SPEC
 #define USE_DMA_SPEC
+#endif
+#ifndef USE_PERSISTENT_OBJECTS
 #define USE_PERSISTENT_OBJECTS
+#endif
+#ifndef USE_LATE_TASK_STATISTICS
 #define USE_LATE_TASK_STATISTICS
-
-#define PLATFORM_TRAIT_ADC_DEVICE 1
 #endif
 
+#define PLATFORM_TRAIT_ADC_DEVICE 1
 
+#define CAMERA_CONTROL_HARDWARE_PWM_AVAILABLE
+#define CAMERA_CONTROL_SOFTWARE_PWM_AVAILABLE
+#define CAMERA_CONTROL_DAC_AVAILABLE
+#ifndef DEFAULT_CAMERA_CONTROL_MODE
+#define DEFAULT_CAMERA_CONTROL_MODE CAMERA_CONTROL_MODE_DAC
+#endif
+#endif
 
 #ifdef CH32H4
 #define TASK_GYROPID_DESIRED_PERIOD     125 // 1000us = 8kHz
@@ -161,21 +216,23 @@ __attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state
 #define FAST_IRQ_HANDLER
 #endif
 
-//load all data to DTCM
-#define DMA_DATA_ZERO_INIT __attribute__((aligned(32)))
-#define DMA_DATA   __attribute__((aligned(32)))
-#define STATIC_DMA_DATA_AUTO      __attribute__((aligned(32)))  static
+// Load DMA data to DTCM
+#define DMA_DATA_ZERO_INIT        __attribute__((aligned(32)))
+#define DMA_DATA                  __attribute__((aligned(32)))
+#define STATIC_DMA_DATA_AUTO      __attribute__((aligned(32))) static
 
 #define DMA_RAM      __attribute__((aligned(32)))
 #define DMA_RW_AXI
 #define DMA_RAM_R
 #define DMA_RAM_W
 #define DMA_RAM_RW
-//--------------------------
 
+#ifndef USE_TIMER_MGMT
 #define USE_TIMER_MGMT
+#endif
+#ifndef USE_TIMER_AF
 #define USE_TIMER_AF
-
+#endif
 
 #if defined(CH32H4)
 #define GPIO_PIN_RESET       0
@@ -192,7 +249,7 @@ __attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state
 #define GPIO_MODE_OUT_AF_OD  0x03
 
 #define GPIO_SPEED_LOW          0x00
-#define GPIO_SPEED_Medium       0x01
+#define GPIO_SPEED_MEDIUM       0x01
 #define GPIO_SPEED_HIGH         0x02
 #define GPIO_SPEED_VERY_HIGH    0x03
 
@@ -200,12 +257,10 @@ __attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state
 #define GPIO_PULL_DOWN       0x01
 #define GPIO_PULL_UP         0x02
 
-//bit 0   1      2   3      4    5       6  7
-//  DIR[1:0]   MODE[1:0]   SPEED[1:0]   PD=0,PU=1
+// bit 0..1: DIR[1:0], bit 2..3: MODE[1:0], bit 4..5: SPEED[1:0], bit 6..7: PULL[1:0]
 #define IO_CONFIG(dir, mode, speed, pupd) ((dir) | ((mode) << 2) | ((speed) << 4) | ((pupd) << 6))
 
-
-#define IOCFG_OUT_PP         IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)      // TODO
+#define IOCFG_OUT_PP         IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
 #define IOCFG_OUT_PP_UP      IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_UP)
 #define IOCFG_OUT_PP_25      IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
 #define IOCFG_OUT_OD         IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_OD, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
@@ -222,16 +277,11 @@ __attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state
 
 #define IO_CONFIG_GET_MODE(cfg)  (((cfg) >> 2) & 0x03)
 #define IO_CONFIG_GET_SPEED(cfg) (((cfg) >> 4) & 0x03)
-#define IO_CONFIG_GET_OTYPE(cfg) (((cfg) >> 0) & 0x03)  //don't need
+#define IO_CONFIG_GET_OTYPE(cfg) (((cfg) >> 0) & 0x03)
 #define IO_CONFIG_GET_PULL(cfg)  (((cfg) >> 6) & 0x03)
-
-
 
 #define SPI_IO_AF_CFG           IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
 #define SPI_IO_AF_SCK_CFG       IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_UP)
-// #define SPI_IO_AF_SCK_CFG_LOW   IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_DOWN)
-// #define SPI_IO_AF_SDI_CFG       IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_AF_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
-
 #define SPI_IO_AF_SDI_CFG       IO_CONFIG(DIR_IN, GPIO_MODE_IN_FLOAT, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
 
 #define SPI_IO_CS_CFG           IO_CONFIG(DIR_OUT, GPIO_MODE_OUT_PP, GPIO_SPEED_VERY_HIGH, GPIO_PULL_NONE)
@@ -243,19 +293,17 @@ __attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state
 #define SPI_RX_DATA_REGISTER(base) ((base)->DATAR)
 
 #define MAX_SPI_PIN_SEL    5
-// #define USE_TX_IRQ_HANDLER
 
-
-#define UART_TX_BUFFER_ATTRIBUTE                    // NONE
-#define UART_RX_BUFFER_ATTRIBUTE                    // NONE
+#define UART_TX_BUFFER_ATTRIBUTE
+#define UART_RX_BUFFER_ATTRIBUTE
 
 #define PLATFORM_TRAIT_RCC      1
 #define UART_TRAIT_AF_PIN       1
-// #define UART_TRAIT_PINSWAP      1
+#define UART_TRAIT_TX_COMPLETE_PENDING 1
+#define USE_PLATFORM_UART_IRQ_HANDLERS
 #define SERIAL_TRAIT_PIN_CONFIG 1
 #define I2C_TRAIT_AF_PIN        1
 #define I2CDEV_COUNT            4
-// #define I2C_TRAIT_HANDLE        1
 #define SPI_TRAIT_AF_PIN        1
 #define UARTHARDWARE_MAX_PINS   5
 
@@ -263,13 +311,11 @@ __attribute__((always_inline)) static inline void ch32IrqRestore(uint32_t *state
 #define UART_REG_TXD(base) (((USART_TypeDef *)(base))->DATAR)
 
 #define DMA_TRAIT_MUX 1
-// #define DMA_TRAIT_CHANNEL 1
 
-#define MAX_MSP_PORT_COUNT 4  //default msp count is 3, it would not be enough for us
+#define MAX_MSP_PORT_COUNT 4
 #endif
 
 #define DMA_CHANREQ_STRING "Request"
-
 
 #define FLASH_CONFIG_BUFFER_TYPE      uint32_t
 #define USB_DP_PIN PB8

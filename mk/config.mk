@@ -10,6 +10,10 @@ BASE_CONFIGS           = $(sort $(notdir $(patsubst %/,%,$(dir \
                              $(wildcard $(CONFIG_DIR)/configs/*/config.h) \
                              $(wildcard $(CONFIG_DIR)/configs/*/*/config.h)))))
 
+# Keep existing board configs usable after upstream MCU target renames.
+CONFIG_MCU_ALIAS_STM32F7X2 := STM32F722
+CONFIG_MCU_ALIAS_STM32G47X := STM32G474
+
 ifneq ($(words $(CONFIG_DIR)),1)
 $(error CONFIG_DIR/BETAFLIGHT_CONFIG path contains whitespace; unsupported by GNU make wildcard.)
 endif
@@ -88,9 +92,6 @@ ifeq ($(strip $(TARGET)),)
 $(error No TARGET identified. Is the $(CONFIG_HEADER_FILE) valid for $(CONFIG)?)
 endif
 
-# Keep existing board configs usable after upstream MCU target renames.
-CONFIG_MCU_ALIAS_STM32F7X2 := STM32F722
-CONFIG_MCU_ALIAS_STM32G47X := STM32G474
 TARGET := $(or $(CONFIG_MCU_ALIAS_$(TARGET)),$(TARGET))
 
 # Optional EXST address adjustment

@@ -24,32 +24,64 @@
 
 #include "platform.h"
 
+#include "common/utils.h"
+
 #include "drivers/exti.h"
 #include "drivers/nvic.h"
 #include "drivers/system.h"
 #include "drivers/persistent.h"
 #include "drivers/usb_io.h"
-#include "ch32_debug.h"
 
 #ifndef USE_VCP
-bool usbCableIsInserted(void) { return false; }
-bool usbCableIsActive(void) { return false; }
+bool usbCableIsInserted(void)
+{
+    return false;
+}
+
+bool usbCableIsActive(void)
+{
+    return false;
+}
 #endif
 
+#define CH32_FLASH_RESET_WAIT_LIMIT 0x02000000U
+
+static void ch32WaitFlashIdleBeforeReset(void)
+{
+#ifdef __riscv
+    asm volatile ("fence iorw, iorw" ::: "memory");
+#endif
+    for (uint32_t timeout = CH32_FLASH_RESET_WAIT_LIMIT;
+         timeout != 0U && (FLASH->STATR & (FLASH_STATR_BSY | FLASH_STATR_WRBSY)) != 0U;
+         timeout--) {
+    }
+}
 
 void systemReset(void)
 {
     __disable_irq();
+    ch32WaitFlashIdleBeforeReset();
+#ifdef __riscv
+    asm volatile ("fence iorw, iorw" ::: "memory");
+#endif
     NVIC_SystemReset();
+#ifdef __riscv
+    asm volatile ("fence iorw, iorw" ::: "memory");
+#endif
+    while (true) {
+        __NOP();
+    }
 }
 
 void systemResetToBootloader(bootloaderRequestType_e requestType)
 {
-    (void)requestType;
+    UNUSED(requestType);
     // Protocol entry points reject this operation. Keep a normal reset as a
     // fallback for direct callers until the paired bootloader supports it.
     persistentObjectWrite(PERSISTENT_OBJECT_RESET_REASON, RESET_NONE);
+#ifdef __riscv
     asm volatile ("fence iorw, iorw" ::: "memory");
+#endif
     systemReset();
 }
 
@@ -65,111 +97,93 @@ static void checkForBootLoaderRequest(void)
 
 void enableGPIOPowerUsageAndNoiseReductions(void)
 {
-    //enable all needed periph
-    RCC_HBPeriphClockCmd(    \
-        RCC_HBPeriph_DMA1 |  \
-        RCC_HBPeriph_DMA2 |  \
-        RCC_HBPeriph_PIOC |  \
-        0, ENABLE             \
-        );
-#ifdef USE_VCP
-    RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS | RCC_HBPeriph_OTG_FS, ENABLE);
+    RCC_HBPeriphClockCmd(
+        RCC_HBPeriph_DMA1 |
+        RCC_HBPeriph_DMA2 |
+        RCC_HBPeriph_PIOC,
+        ENABLE
+    );
+#if defined(USE_VCP) || defined(USE_USB_MSC)
+    RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS, ENABLE);
 #endif
-    RCC_HB1PeriphClockCmd(    \
-        RCC_HB1Periph_TIM2 |  \
-        RCC_HB1Periph_TIM3 |  \
-        RCC_HB1Periph_TIM4 |  \
-        RCC_HB1Periph_TIM5 |  \
-        RCC_HB1Periph_TIM6 |  \
-        RCC_HB1Periph_TIM7 |  \
-        RCC_HB1Periph_USART6 | \
-        RCC_HB1Periph_USART7 | \
-        RCC_HB1Periph_USART8 | \
-        RCC_HB1Periph_LPTIM1 | \
-        RCC_HB1Periph_LPTIM2 | \
-        RCC_HB1Periph_WWDG | \
-        RCC_HB1Periph_SPI2 | \
-        RCC_HB1Periph_SPI3 | \
-        RCC_HB1Periph_SPI4 | \
-        RCC_HB1Periph_USART2 | \
-        RCC_HB1Periph_USART3 | \
-        RCC_HB1Periph_USART4 | \
-        RCC_HB1Periph_USART5 | \
-        RCC_HB1Periph_I2C1 | \
-        RCC_HB1Periph_I2C2 | \
-        RCC_HB1Periph_CAN3 | \
-        RCC_HB1Periph_CAN1 | \
-        RCC_HB1Periph_CAN2 | \
-        RCC_HB1Periph_BKP | \
-        RCC_HB1Periph_PWR | \
-        RCC_HB1Periph_DAC | \
-        RCC_HB1Periph_I2C3 | \
-        RCC_HB1Periph_SWPMI | \
-        0, ENABLE             \
-        );
-    RCC_HB2PeriphClockCmd(    \
-        RCC_HB2Periph_AFIO | \
-        RCC_HB2Periph_GPIOA | \
-        RCC_HB2Periph_GPIOB | \
-        RCC_HB2Periph_GPIOC | \
-        RCC_HB2Periph_GPIOD | \
-        RCC_HB2Periph_GPIOE | \
-        RCC_HB2Periph_GPIOF | \
-        RCC_HB2Periph_ADC1 | \
-        RCC_HB2Periph_ADC2 | \
-        RCC_HB2Periph_TIM1 | \
-        RCC_HB2Periph_SPI1 | \
-        RCC_HB2Periph_TIM8 | \
-        RCC_HB2Periph_USART1 | \
-        RCC_HB2Periph_I2C4 | \
-        RCC_HB2Periph_SDIO | \
-        RCC_HB2Periph_TIM9 | \
-        RCC_HB2Periph_TIM10 | \
-        RCC_HB2Periph_TIM11 | \
-        RCC_HB2Periph_TIM12 | \
-        0, ENABLE             \
-        );
+    RCC_HB1PeriphClockCmd(
+        RCC_HB1Periph_TIM2 |
+        RCC_HB1Periph_TIM3 |
+        RCC_HB1Periph_TIM4 |
+        RCC_HB1Periph_TIM5 |
+        RCC_HB1Periph_TIM6 |
+        RCC_HB1Periph_TIM7 |
+        RCC_HB1Periph_USART6 |
+        RCC_HB1Periph_USART7 |
+        RCC_HB1Periph_USART8 |
+        RCC_HB1Periph_LPTIM1 |
+        RCC_HB1Periph_LPTIM2 |
+        RCC_HB1Periph_WWDG |
+        RCC_HB1Periph_SPI2 |
+        RCC_HB1Periph_SPI3 |
+        RCC_HB1Periph_SPI4 |
+        RCC_HB1Periph_USART2 |
+        RCC_HB1Periph_USART3 |
+        RCC_HB1Periph_USART4 |
+        RCC_HB1Periph_USART5 |
+        RCC_HB1Periph_I2C1 |
+        RCC_HB1Periph_I2C2 |
+        RCC_HB1Periph_CAN3 |
+        RCC_HB1Periph_CAN1 |
+        RCC_HB1Periph_CAN2 |
+        RCC_HB1Periph_BKP |
+        RCC_HB1Periph_PWR |
+        RCC_HB1Periph_DAC |
+        RCC_HB1Periph_I2C3 |
+        RCC_HB1Periph_SWPMI,
+        ENABLE
+    );
+    RCC_HB2PeriphClockCmd(
+        RCC_HB2Periph_AFIO |
+        RCC_HB2Periph_GPIOA |
+        RCC_HB2Periph_GPIOB |
+        RCC_HB2Periph_GPIOC |
+        RCC_HB2Periph_GPIOD |
+        RCC_HB2Periph_GPIOE |
+        RCC_HB2Periph_GPIOF |
+        RCC_HB2Periph_ADC1 |
+        RCC_HB2Periph_ADC2 |
+        RCC_HB2Periph_TIM1 |
+        RCC_HB2Periph_SPI1 |
+        RCC_HB2Periph_TIM8 |
+        RCC_HB2Periph_USART1 |
+        RCC_HB2Periph_I2C4 |
+        RCC_HB2Periph_SDIO |
+        RCC_HB2Periph_TIM9 |
+        RCC_HB2Periph_TIM10 |
+        RCC_HB2Periph_TIM11 |
+        RCC_HB2Periph_TIM12,
+        ENABLE
+    );
 }
 
 bool isMPUSoftReset(void)
 {
     if (cachedResetFlags & RCC_SFTRSTF) {
         return true;
-    } else{
+    } else {
         return false;
     }
 }
 
 uint32_t SysTick_Config(uint32_t ticks)
 {
-    if ((ticks - 1UL) > 0xFFFFFFFF) {
-        return(1UL);                                                /* Reload value impossible */
+    if ((ticks - 1UL) > 0xFFFFFFFFUL) {
+        return 1UL;                                                     /* Reload value impossible */
     }
-    SysTick0->ISR &= ~(1 << 1);                                     /* clear flag */
-    SysTick1->CMP = (uint32_t)(ticks - 1UL);                        /* set reload register */
-    SysTick1->CNT = 0UL;                                            /* Load the SysTick Counter Value */
-    SysTick1->CTLR = (1 << 6) | (1 << 4) | (1 << 3) | (1 << 2) | (1 << 1) | (1 << 0);
-    NVIC_SetPriority(SysTick1_IRQn, NVIC_BUILD_PRIORITY(3, 0));       /* lowest preemption group */
+    SysTick0->ISR &= ~(1U << 1);                                        /* Clear flag */
+    SysTick1->CMP = (uint32_t)(ticks - 1UL);                            /* Set reload register */
+    SysTick1->CNT = 0UL;                                                /* Load the SysTick counter value */
+    SysTick1->CTLR = (1U << 6) | (1U << 4) | (1U << 3) | (1U << 2) | (1U << 1) | (1U << 0);
+    NVIC_SetPriority(SysTick1_IRQn, NVIC_BUILD_PRIORITY(3, 0));         /* Lowest preemption group */
     NVIC_EnableIRQ(SysTick1_IRQn);
-    return(0UL);                                                    /* Function successful */
+    return 0UL;                                                         /* Function successful */
 }
-
-// void ipcInterruptInit(void)
-// {
-//     IPC_InitTypeDef  IPC_InitStructure = {0};
-//     IPC_InitStructure.IPC_CH = IPC_CH0;
-//     IPC_InitStructure.TxCID = IPC_TxCID0;
-//     IPC_InitStructure.RxCID = IPC_RxCID1;   //V5 receive
-//     IPC_InitStructure.TxIER = DISABLE;
-//     IPC_InitStructure.RxIER = ENABLE;
-//     IPC_InitStructure.AutoEN = ENABLE;
-//  IPC_Init(&IPC_InitStructure);
-//  IPC_CH0_Lock();
-//     IPC->CLR = 0x1; //clear flag;
-//     NVIC_SetPriority(IPC_CH0_IRQn, 0x10);
-//  NVIC_EnableIRQ(IPC_CH0_IRQn);
-// }
-
 
 void systemInit(void)
 {
@@ -179,36 +193,16 @@ void systemInit(void)
 
     checkForBootLoaderRequest();
 
-    // cache RCC->CSR value to use it in isMPUSoftReset() and others
+    // Cache RCC->RSTSCKR value to use it in isMPUSoftReset() and others
     cachedResetFlags = RCC->RSTSCKR;
 
-    RCC_HBPeriphClockCmd(    \
-        RCC_HBPeriph_USBHS |  \
-        RCC_HBPeriph_OTG_FS |  \
-        0, DISABLE            \
-        );
-
+    RCC_HBPeriphClockCmd(RCC_HBPeriph_USBHS | RCC_HBPeriph_OTG_FS, DISABLE);
 
     RCC_ClearFlag();
     enableGPIOPowerUsageAndNoiseReductions();
-    // Init cycle counter
+
     cycleCounterInit();
-    // SysTick
     SysTick_Config(HCLKClock / 1000);
 
-    SWPMI->OR |= 1;  //disable SWPMI, enable GPIO input
-
-
-    // ipcInterruptInit( );
+    SWPMI->OR |= 1; // Disable SWPMI, enable GPIO input
 }
-
-// void IPC_CH0_Handler(void) __attribute__((interrupt("WCH-Interrupt-fast")));
-// void IPC_CH0_Handler(void)
-// {
-//     if (IPC_GetITStatus(IPC_CH0,IPC_CH_Sta_Bit0) != RESET)
-//  {
-
-//         __disable_irq( );
-//         while(1);
-//  }
-// }

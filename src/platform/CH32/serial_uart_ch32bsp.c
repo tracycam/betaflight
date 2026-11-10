@@ -116,7 +116,7 @@ void uartReconfigure(uartPort_t *uartPort)
         {
             USART_ClearITPendingBit(USARTx, USART_IT_RXNE);
             USART_ITConfig(USARTx, USART_IT_RXNE, ENABLE);
-            USART_ITConfig(USARTx, USART_IT_IDLE, ENABLE);
+            USART_ITConfig(USARTx, USART_IT_IDLE, uartPort->port.idleCallback ? ENABLE : DISABLE);
         }
     }
 
@@ -151,6 +151,16 @@ void uartReconfigure(uartPort_t *uartPort)
     }
     // TODO: usart_enable is called twice
     USART_Cmd(USARTx, ENABLE);
+}
+
+void uartSetIdleCallback(serialPort_t *instance, serialIdleCallbackPtr callback)
+{
+    uartPort_t *uartPort = container_of(instance, uartPort_t, port);
+    ATOMIC_BLOCK(NVIC_PRIO_SERIALUART1) {
+        instance->idleCallback = callback;
+        USART_ITConfig((USART_TypeDef *)uartPort->USARTx, USART_IT_IDLE,
+            callback && (instance->mode & MODE_RX) && !uartPort->rxDMAResource ? ENABLE : DISABLE);
+    }
 }
 
 bool checkUsartTxOutput(uartPort_t *s)
@@ -274,48 +284,90 @@ void uartDmaIrqHandler(dmaChannelDescriptor_t *descriptor)
     }
 }
 
+static inline void uartStoreRxByte(uartPort_t *s, uint16_t data)
+{
+    if (s->port.rxCallback) {
+        s->port.rxCallback(data, s->port.rxCallbackData);
+    } else {
+        s->port.rxBuffer[s->port.rxBufferHead] = data;
+        s->port.rxBufferHead = (s->port.rxBufferHead + 1) % s->port.rxBufferSize;
+    }
+}
+
 FAST_IRQ_HANDLER void uartIrqHandler(uartPort_t *s)
 {
     USART_TypeDef *USARTx = (USART_TypeDef *)s->USARTx;
-    if (!s->rxDMAResource && (USART_GetFlagStatus(USARTx, USART_FLAG_RXNE) == SET)) {
-        if (s->port.rxCallback) {
-            s->port.rxCallback(USARTx->DATAR, s->port.rxCallbackData);
-        } else {
-            s->port.rxBuffer[s->port.rxBufferHead] = USARTx->DATAR;
-            s->port.rxBufferHead = (s->port.rxBufferHead + 1) % s->port.rxBufferSize;
+    uint16_t statr = USARTx->STATR;
+    const uint16_t ctlr1 = USARTx->CTLR1;
+    if (statr & (USART_STATR_RXNE | USART_STATR_ORE)) {
+        if (!s->rxDMAResource || (statr & USART_STATR_ORE)) {
+            const uint16_t data = USARTx->DATAR;
+            if (!s->rxDMAResource && (statr & USART_STATR_RXNE)) {
+                uartStoreRxByte(s, data);
+            }
         }
     }
 
-    // UART transmission completed
-    if ((USART_GetFlagStatus(USARTx, USART_FLAG_TC) != RESET)) {
-        USART_ClearFlag(USARTx, USART_FLAG_TC);
-
+    if ((ctlr1 & USART_CTLR1_TCIE) && (statr & USART_STATR_TC)) {
+        USARTx->STATR = (uint16_t)~USART_STATR_TC;
         s->txCompletePending = s->port.txBufferHead == s->port.txBufferTail;
         uartTxMonitorIfComplete(s);
     }
 
-    if (!s->txDMAResource && (USART_GetFlagStatus(USARTx, USART_FLAG_TXE) == SET)) {
+    if (!s->txDMAResource && (ctlr1 & USART_CTLR1_TXEIE) && (statr & USART_STATR_TXE)) {
         if (s->port.txBufferTail != s->port.txBufferHead) {
             s->txCompletePending = false;
-            USART_SendData(USARTx, s->port.txBuffer[s->port.txBufferTail]);
+            USARTx->DATAR = s->port.txBuffer[s->port.txBufferTail];
             s->port.txBufferTail = (s->port.txBufferTail + 1) % s->port.txBufferSize;
         } else {
-            USART_ITConfig(USARTx, USART_IT_TXE, DISABLE);
+            CLEAR_BIT(USARTx->CTLR1, USART_CTLR1_TXEIE);
         }
     }
 
-    if (USART_GetFlagStatus(USARTx, USART_FLAG_ORE) == SET) {
-        USART_ClearFlag(USARTx, USART_FLAG_ORE); //clear by read DATAR?
-        (void)USARTx->STATR;
-        (void)USARTx->DATAR;
-    }
-
-    if (USART_GetFlagStatus(USARTx, USART_FLAG_IDLE) == SET) {
+    if ((ctlr1 & USART_CTLR1_IDLEIE) && (statr & USART_STATR_IDLE)) {
+        const uint16_t idleStatr = USARTx->STATR;
+        if (idleStatr & USART_STATR_IDLE) {
+            const uint16_t data = USARTx->DATAR;
+            if (!s->rxDMAResource && (idleStatr & USART_STATR_RXNE)) {
+                uartStoreRxByte(s, data);
+            }
+        }
         if (s->port.idleCallback) {
             s->port.idleCallback();
         }
-        (void)USARTx->STATR;
-        (void)USARTx->DATAR;
     }
 }
+
+#define CH32_UART_IRQ_HANDLER(number, dev)                \
+    __FAST_INTERRUPT FAST_IRQ_HANDLER                     \
+    void USART ## number ## _IRQHandler(void)             \
+    {                                                     \
+        uartPort_t *uartPort = &(uartDevice[(dev)].port); \
+        uartIrqHandler(uartPort);                         \
+    }
+
+#ifdef USE_UART1
+CH32_UART_IRQ_HANDLER(1, UARTDEV_1)
+#endif
+#ifdef USE_UART2
+CH32_UART_IRQ_HANDLER(2, UARTDEV_2)
+#endif
+#ifdef USE_UART3
+CH32_UART_IRQ_HANDLER(3, UARTDEV_3)
+#endif
+#ifdef USE_UART4
+CH32_UART_IRQ_HANDLER(4, UARTDEV_4)
+#endif
+#ifdef USE_UART5
+CH32_UART_IRQ_HANDLER(5, UARTDEV_5)
+#endif
+#ifdef USE_UART6
+CH32_UART_IRQ_HANDLER(6, UARTDEV_6)
+#endif
+#ifdef USE_UART7
+CH32_UART_IRQ_HANDLER(7, UARTDEV_7)
+#endif
+#ifdef USE_UART8
+CH32_UART_IRQ_HANDLER(8, UARTDEV_8)
+#endif
 #endif // USE_UART

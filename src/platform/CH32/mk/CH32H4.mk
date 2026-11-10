@@ -58,8 +58,17 @@ VPATH           := $(VPATH):$(LIB_MAIN_DIR)/CH32H41x/Cmsis/Core:$(LIB_MAIN_DIR)/
 VCP_SRC =  \
            ch32h41x_hs/usb_ch32h41x_usbhs_reg.c \
            class/cdc/usbd_cdc_acm.c \
+           class/msc/usbd_msc.c \
            core/usbd_core.c \
            board/cdc_vcp_ch32h41x.c
+
+MSC_SRC = \
+           drivers/usb_msc_common.c \
+           CH32/usb_msc_ch32h41x.c \
+           msc/usbd_storage.c \
+           msc/usbd_storage_emfat.c \
+           msc/emfat.c \
+           msc/emfat_file.c
 
 VCP_INCLUDES = \
         $(MIDDLEWARES_DIR)/ch32h41x_hs \
@@ -92,6 +101,7 @@ LD_FLAGS     = -lm \
               -lc \
               -lnosys \
               $(ARCH_FLAGS) \
+              -lprintfloat \
               $(LTO_FLAGS) \
               $(DEBUG_FLAGS) \
               -static \
@@ -102,8 +112,9 @@ LD_FLAGS     = -lm \
               -T$(LD_SCRIPT) \
                $(EXTRA_LD_FLAGS)
 ############################################################################
-ARCH_FLAGS      = -std=c99 -march=rv32imafc_zba_zbb_zbc_zbs_xw -mabi=ilp32f -msmall-data-limit=8 -msave-restore -fmessage-length=0 -fmax-errors=5 -fsigned-char -fsingle-precision-constant -Wunused -Wuninitialized -lprintfloat -g
-DEVICE_FLAGS    += -DUSE_CHBSP_DRIVER -DCH32H415 -DCH32H41x -DHSE_VALUE=$(HSE_VALUE) -DCH32 -DUSE_OTG_HOST_MODE
+ARCH_FLAGS      = -march=rv32imafc_zba_zbb_zbc_zbs_xw -mabi=ilp32f -msmall-data-limit=8 -msave-restore
+CFLAGS         += -fmessage-length=0 -fmax-errors=5 -fsigned-char -fsingle-precision-constant -Wunused -Wuninitialized
+DEVICE_FLAGS    += -DUSE_CHBSP_DRIVER -DCH32H41x -DHSE_VALUE=$(HSE_VALUE) -DCH32 -DUSE_OTG_HOST_MODE
 
 DOUBLE_PROMOTION        := no
 LTO                     := no
@@ -111,7 +122,7 @@ LTO                     := no
 MCU_COMMON_SRC = \
         common/stm32/system.c \
         common/stm32/io_impl.c \
-        common/stm32/config_flash.c \
+        CH32/config_flash.c \
         common/stm32/mco.c \
         CH32/startup/ch32h417_it.c \
         CH32/startup/system_ch32h417.c \
@@ -135,11 +146,8 @@ MCU_COMMON_SRC = \
         CH32/serial_uart_ch32h41x.c \
         CH32/serial_usb_vcp_ch32h4.c \
         CH32/system_ch32h41x.c \
-        CH32/target/CH32H415/boot_sdi.c \
         CH32/timer_ch32bsp.c \
         CH32/timer_ch32h41x.c \
-        CH32/usb_msc_ch32h41x.c \
-        CH32/usb_msc_sdcard_spi_ch32h41x.c \
         drivers/accgyro/accgyro_mpu.c \
         drivers/dshot_bitbang_decode.c \
         drivers/inverter.c \
@@ -148,31 +156,21 @@ MCU_COMMON_SRC = \
         common/stm32/dshot_dpwm.c \
         common/stm32/dshot_bitbang_shared.c \
         drivers/bus_i2c_timing.c \
-        drivers/usb_msc_common.c \
         drivers/adc.c \
         drivers/bus_spi_config.c \
         common/stm32/bus_i2c_pinconfig.c \
         common/stm32/bus_spi_pinconfig.c \
         common/stm32/bus_spi_hw.c \
-        common/stm32/camera_control.c \
         common/stm32/serial_uart_hw.c \
         common/stm32/serial_uart_pinconfig.c \
         drivers/serial_escserial.c \
         drivers/serial_pinconfig.c \
         drivers/usb_io.c \
-        class/msc/usbd_msc.c \
-        msc/usbd_storage.c \
-        msc/usbd_storage_emfat.c \
-        msc/emfat.c \
-        msc/emfat_file.c \
         common/stm32/ledstrip_ws2811_stm32.c \
         common/stm32/debug_pin.c \
         common/stm32/adc_impl.c \
         common/stm32/expresslrs_driver_hw.c \
-        common/stm32/fault_handlers.c
-        
-#         \
-#         msc/usbd_storage_sd_spi.c
+        CH32/fault_handlers.c
 
 SPEED_OPTIMISED_SRC += \
             common/stm32/system.c \
